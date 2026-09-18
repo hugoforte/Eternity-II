@@ -10,13 +10,9 @@ hint piece (139 at row 8, column 7). It carried a $2,000,000 prize and has
 **never been solved**. This app is therefore a laboratory, not a victory lap:
 the interesting part is watching how different strategies behave.
 
-![The live view](docs/img/live.png)
-
 | | |
 |---|---|
-| ![Replay](docs/img/replay.png) | ![Insights](docs/img/insights.png) |
 | **Replay** — scrub through the exact order the pieces went down | **Insights** — one card per significant pattern the Analyzer finds |
-| ![Lessons](docs/img/lessons.png) | ![Settings](docs/img/settings.png) |
 | **Lessons** — patterns strong enough to guide future attempts | **Settings** — 14 live-tunable controls with learned defaults |
 
 ---
