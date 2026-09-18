@@ -1,0 +1,332 @@
+"""Single source of truth for every tunable solver option.
+
+The UI builds its controls from this schema (served at /api/schema), the tuner
+treats each entry as a bandit arm set, and the supervisor turns values into
+``--key=value`` arguments for the Java engine.  Adding a knob in one place makes
+it appear in all three.
+
+Field meanings
+--------------
+key          argument name understood by core.SolverConfig
+label        short human label for the UI
+kind         'enum' | 'bool' | 'int' | 'scale'
+options      for 'enum': list of {value, label, blurb}
+values       for 'scale': explicit ordered list of allowed numbers
+min/max/step for 'int'
+default      the cold-start value (what we measured as best)
+group        UI grouping
+blurb        one-line explanation
+low/high     what happens at each extreme (shown under the slider)
+tunable      whether the learner is allowed to change it
+"""
+
+SETTINGS = [
+    # ------------------------------------------------------------ strategy
+    {
+        "key": "cellOrder",
+        "label": "Cell order",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "mrv",
+        "tunable": True,
+        "blurb": "How the solver picks which empty square to fill next.",
+        "options": [
+            {"value": "mrv", "label": "Most constrained",
+             "blurb": "Always fill the square with the fewest legal pieces. Strongest pruning."},
+            {"value": "hybrid", "label": "Hybrid",
+             "blurb": "Most-constrained while choices are few, then sweep in order."},
+            {"value": "rowMajor", "label": "Row by row",
+             "blurb": "Simple left-to-right, top-to-bottom sweep. Cheapest per step."},
+        ],
+    },
+    {
+        "key": "hybridThreshold",
+        "label": "Hybrid switch point",
+        "kind": "int",
+        "group": "Search strategy",
+        "min": 1, "max": 64, "step": 1,
+        "default": 4,
+        "tunable": True,
+        "blurb": "Hybrid mode only: use most-constrained while the best square has at most this many choices.",
+        "low": "1 = almost always sweep in order",
+        "high": "64 = almost always most-constrained",
+    },
+    {
+        "key": "tieBreak",
+        "label": "Tie breaker",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "mostNeighbours",
+        "tunable": True,
+        "blurb": "Which square wins when several are equally constrained.",
+        "options": [
+            {"value": "mostNeighbours", "label": "Most neighbours",
+             "blurb": "Prefer squares already surrounded. Keeps the filled area compact."},
+            {"value": "fewestNeighbours", "label": "Fewest neighbours",
+             "blurb": "Prefer isolated squares. Spreads the search out."},
+            {"value": "lowestIndex", "label": "Top-left first",
+             "blurb": "Plain reading order."},
+            {"value": "nearestFixed", "label": "Near the fixed piece",
+             "blurb": "Grow outwards from the mandatory piece 139."},
+            {"value": "nearestCentre", "label": "Near the centre",
+             "blurb": "Grow outwards from the middle of the board."},
+        ],
+    },
+    {
+        "key": "startCell",
+        "label": "Opening move",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "auto",
+        "tunable": True,
+        "blurb": "Which square the solver is forced to fill first.",
+        "options": [
+            {"value": "auto", "label": "Let it choose", "blurb": "No constraint on the opening move."},
+            {"value": "topLeft", "label": "Top-left corner", "blurb": ""},
+            {"value": "topRight", "label": "Top-right corner", "blurb": ""},
+            {"value": "bottomLeft", "label": "Bottom-left corner", "blurb": ""},
+            {"value": "bottomRight", "label": "Bottom-right corner", "blurb": ""},
+            {"value": "centre", "label": "Centre", "blurb": ""},
+        ],
+    },
+
+    # --------------------------------------------------------- piece choice
+    {
+        "key": "valueOrder",
+        "label": "Piece order",
+        "kind": "enum",
+        "group": "Piece choice",
+        "default": "natural",
+        "tunable": True,
+        "blurb": "The order in which candidate pieces are tried in a square.",
+        "options": [
+            {"value": "natural", "label": "Natural",
+             "blurb": "Piece number order. Deterministic and cache friendly."},
+            {"value": "reverse", "label": "Reversed", "blurb": "Highest piece number first."},
+            {"value": "random", "label": "Shuffled",
+             "blurb": "Random order from the seed. Pairs well with restarts."},
+            {"value": "rarestColour", "label": "Rarest colours first",
+             "blurb": "Try pieces whose colours are scarce, to spend rare pieces early."},
+        ],
+    },
+    {
+        "key": "shuffleStrength",
+        "label": "Shuffle strength",
+        "kind": "int",
+        "group": "Piece choice",
+        "min": 0, "max": 100, "step": 5,
+        "default": 0,
+        "tunable": True,
+        "blurb": "How much randomness is mixed into the piece order.",
+        "low": "0 = keep the chosen order exactly",
+        "high": "100 = fully scrambled every time",
+    },
+    {
+        "key": "candidateCap",
+        "label": "Choices per square",
+        "kind": "scale",
+        "group": "Piece choice",
+        "values": [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024],
+        "default": 1024,
+        "tunable": True,
+        "blurb": "Maximum number of pieces tried in any one square before giving up on it.",
+        "low": "1 = greedy. Blisteringly fast, can never find a full solution",
+        "high": "1024 = try everything. Complete search",
+    },
+
+    # -------------------------------------------------------------- pruning
+    {
+        "key": "forwardCheck",
+        "label": "Look ahead",
+        "kind": "enum",
+        "group": "Pruning",
+        "default": "fullBoard",
+        "tunable": True,
+        "blurb": "How hard the solver looks for dead ends before committing.",
+        "options": [
+            {"value": "none", "label": "None", "blurb": "Never look ahead. Maximum speed per step, worst pruning."},
+            {"value": "neighbours", "label": "Neighbours",
+             "blurb": "Check the squares next to the piece just placed."},
+            {"value": "fullBoard", "label": "Whole board",
+             "blurb": "Backtrack as soon as any empty square has no legal piece."},
+        ],
+    },
+    {
+        "key": "greyInteriorPruning",
+        "label": "Grey edge pruning",
+        "kind": "bool",
+        "group": "Pruning",
+        "default": True,
+        "tunable": True,
+        "blurb": "Forbid grey (border) edges in the middle of the board. Always safe: the piece set has exactly enough grey edges for the border.",
+        "low": "off = more candidates to sift through",
+        "high": "on = fewer candidates, same solutions",
+    },
+
+    # ------------------------------------------------------------- restarts
+    {
+        "key": "restartPolicy",
+        "label": "Restart policy",
+        "kind": "enum",
+        "group": "Restarts",
+        "default": "none",
+        "tunable": True,
+        "blurb": "Abandon and restart the search to escape an unlucky early choice.",
+        "options": [
+            {"value": "none", "label": "Never", "blurb": "One long search."},
+            {"value": "fixed", "label": "Fixed", "blurb": "Restart every N nodes."},
+            {"value": "geometric", "label": "Geometric", "blurb": "Each run is longer than the last by a fixed factor."},
+            {"value": "luby", "label": "Luby", "blurb": "The classic 1,1,2,1,1,2,4,... schedule. Robust against heavy-tailed runtimes."},
+        ],
+    },
+    {
+        "key": "restartBase",
+        "label": "Restart interval",
+        "kind": "scale",
+        "group": "Restarts",
+        "values": [1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
+        "default": 100000,
+        "tunable": True,
+        "blurb": "Nodes in the first run before the first restart.",
+        "low": "1k = restart constantly, never goes deep",
+        "high": "5M = restarts almost never happen",
+    },
+    {
+        "key": "restartMultiplier",
+        "label": "Restart growth",
+        "kind": "int",
+        "group": "Restarts",
+        "min": 110, "max": 400, "step": 10,
+        "default": 150,
+        "tunable": True,
+        "blurb": "Geometric policy only: each run is this much longer than the last (percent).",
+        "low": "110% = barely grows, many short runs",
+        "high": "400% = runs get long very quickly",
+    },
+
+    # -------------------------------------------------------------- attempt
+    {
+        "key": "nodeBudget",
+        "label": "Attempt length",
+        "kind": "scale",
+        "group": "Attempt",
+        "values": [100000, 250000, 500000, 1000000, 2000000,
+                   5000000, 10000000, 25000000, 50000000, 100000000],
+        "default": 5000000,
+        "tunable": True,
+        "blurb": "How many search steps one attempt gets before the board resets and a new attempt begins.",
+        "low": "100k = very short attempts, lots of history",
+        "high": "100M = long attempts that dig deep",
+    },
+    {
+        "key": "randomSeed",
+        "label": "Random seed",
+        "kind": "int",
+        "group": "Attempt",
+        "min": 0, "max": 999999, "step": 1,
+        "default": 12345,
+        "tunable": False,
+        "blurb": "Pin this to reproduce a run exactly. The learner randomises it each attempt.",
+        "low": "0",
+        "high": "999999",
+    },
+]
+
+BY_KEY = {s["key"]: s for s in SETTINGS}
+
+GROUP_ORDER = ["Search strategy", "Piece choice", "Pruning", "Restarts", "Attempt"]
+
+
+def defaults():
+    """Cold-start configuration: what measurement said was best."""
+    return {s["key"]: s["default"] for s in SETTINGS}
+
+
+def arms(setting):
+    """Discrete choices the learner may pick from for one setting."""
+    kind = setting["kind"]
+    if kind == "enum":
+        return [o["value"] for o in setting["options"]]
+    if kind == "bool":
+        return [True, False]
+    if kind == "scale":
+        return list(setting["values"])
+    if kind == "int":
+        lo, hi, step = setting["min"], setting["max"], setting.get("step", 1)
+        vals = list(range(lo, hi + 1, max(1, step)))
+        # Keep the arm count manageable for the bandit, but never drop the
+        # default: the learner has to be able to choose the value the UI starts
+        # on, otherwise "optimal" could never be reproduced.
+        if len(vals) > 12:
+            idx = [round(i * (len(vals) - 1) / 11) for i in range(12)]
+            vals = [vals[i] for i in sorted(set(idx))]
+        default = setting.get("default")
+        if default is not None and default not in vals:
+            vals.append(default)
+            vals.sort()
+        return vals
+    return [setting["default"]]
+
+
+def tunable_settings():
+    return [s for s in SETTINGS if s.get("tunable", True)]
+
+
+def coerce(key, value):
+    """Force a value coming from the browser into the right type and range."""
+    s = BY_KEY.get(key)
+    if s is None:
+        return None
+    kind = s["kind"]
+    try:
+        if kind == "enum":
+            allowed = [o["value"] for o in s["options"]]
+            return value if value in allowed else s["default"]
+        if kind == "bool":
+            if isinstance(value, bool):
+                return value
+            return str(value).lower() in ("1", "true", "yes", "on")
+        if kind == "scale":
+            v = int(value)
+            allowed = s["values"]
+            # snap to the nearest allowed step
+            return min(allowed, key=lambda a: abs(a - v))
+        if kind == "int":
+            v = int(value)
+            v = max(s["min"], min(s["max"], v))
+            return v
+    except (TypeError, ValueError):
+        return s["default"]
+    return s["default"]
+
+
+def coerce_config(raw):
+    """Build a complete, valid config from a partial dict."""
+    cfg = defaults()
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if key in BY_KEY:
+                cfg[key] = coerce(key, value)
+    return cfg
+
+
+def to_engine_args(cfg):
+    """Turn a config dict into engine command-line arguments."""
+    args = []
+    for key, value in cfg.items():
+        if key not in BY_KEY:
+            continue
+        if isinstance(value, bool):
+            value = "true" if value else "false"
+        args.append("--%s=%s" % (key, value))
+    return args
+
+
+def same_config(a, b):
+    """Compare two configs ignoring the random seed (which always varies)."""
+    for s in SETTINGS:
+        if not s.get("tunable", True):
+            continue
+        if a.get(s["key"]) != b.get(s["key"]):
+            return False
+    return True

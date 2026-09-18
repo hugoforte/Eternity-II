@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Eternity II Lab</title>
+<link rel="stylesheet" href="/css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23120f2e'/%3E%3Cpath d='M16 3 L29 16 L16 29 L3 16 Z' fill='%23ffd93d'/%3E%3Cpath d='M16 3 L29 16 L16 16 Z' fill='%23ff6fa5'/%3E%3Cpath d='M16 16 L29 16 L16 29 Z' fill='%2343b8ff'/%3E%3Cpath d='M3 16 L16 16 L16 29 Z' fill='%234ddb8b'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<div class="aurora" aria-hidden="true"><span></span><span></span><span></span></div>
+<canvas id="confetti" class="confetti" aria-hidden="true"></canvas>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M16 1 L31 16 L16 31 L1 16 Z" fill="#ffd93d"/>
+      <path d="M16 1 L31 16 L16 16 Z" fill="#ff6fa5"/>
+      <path d="M16 16 L31 16 L16 31 Z" fill="#43b8ff"/>
+      <path d="M1 16 L16 16 L16 31 Z" fill="#4ddb8b"/>
+    </svg>
+    <div class="brand-text">
+      <h1>Eternity&nbsp;II <span>Lab</span></h1>
+      <p>256 pieces &middot; 1 fixed hint &middot; never yet solved</p>
+    </div>
+  </div>
+
+  <div class="chips" id="chips">
+    <div class="chip" title="Attempt currently being solved">
+      <span class="chip-label">Attempt</span><span class="chip-value" id="chipAttempt">—</span>
+    </div>
+    <div class="chip chip-accent" title="Most pieces placed in this attempt">
+      <span class="chip-label">Depth</span><span class="chip-value" id="chipDepth">0<i>/256</i></span>
+    </div>
+    <div class="chip" title="Search steps explored">
+      <span class="chip-label">Nodes</span><span class="chip-value" id="chipNodes">0</span>
+    </div>
+    <div class="chip" title="Search speed">
+      <span class="chip-label">Speed</span><span class="chip-value" id="chipSpeed">0<i>/s</i></span>
+    </div>
+    <div class="chip chip-clickable" id="chipRecordWrap" title="All-time best across every attempt — click to replay it">
+      <span class="chip-label">Record</span><span class="chip-value" id="chipRecord">0</span>
+    </div>
+  </div>
+
+  <div class="topbar-actions">
+    <button class="btn btn-ghost" id="btnPause" title="Pause or resume the live solver">
+      <span class="icon" id="pauseIcon">❙❙</span><span id="pauseText">Pause</span>
+    </button>
+    <button class="btn btn-ghost" id="btnSkip" title="End this attempt now and start the next one">
+      <span class="icon">⏭</span>Next
+    </button>
+    <div class="conn" id="conn" title="Live connection"><span class="dot"></span><em>live</em></div>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ------------------------------------------------------------- board -->
+  <section class="panel board-panel">
+    <div class="board-head">
+      <div class="mode" id="mode">
+        <span class="mode-pill live" id="modePill"><span class="rec"></span>LIVE</span>
+        <span class="mode-detail" id="modeDetail">watching the solver work</span>
+      </div>
+      <button class="btn btn-live" id="btnGoLive" hidden>
+        <span class="icon">◉</span>Back to live
+      </button>
+    </div>
+
+    <div class="board-wrap">
+      <canvas id="board" width="760" height="760" aria-label="Eternity II board"></canvas>
+      <div class="board-empty" id="boardEmpty">
+        <div class="spinner"></div>
+        <p>warming up the solver…</p>
+      </div>
+    </div>
+
+    <div class="timeline">
+      <div class="timeline-row">
+        <button class="btn btn-round" id="btnPlay" title="Play / pause replay" disabled>▶</button>
+        <button class="btn btn-round btn-small" id="btnStepBack" title="One piece back" disabled>◀</button>
+        <button class="btn btn-round btn-small" id="btnStepFwd" title="One piece forward" disabled>▶</button>
+        <div class="slider-holder">
+          <input type="range" id="scrub" min="0" max="0" value="0" step="1" disabled
+                 aria-label="Placement order">
+          <div class="scrub-ticks" id="scrubTicks"></div>
+        </div>
+        <output class="scrub-out" id="scrubOut">0 / 0</output>
+        <label class="speed">
+          <span>speed</span>
+          <select id="speed">
+            <option value="240">slow</option>
+            <option value="90" selected>normal</option>
+            <option value="30">fast</option>
+            <option value="8">turbo</option>
+          </select>
+        </label>
+      </div>
+      <div class="sparkline-wrap">
+        <canvas id="spark" height="54" aria-label="Depth over time"></canvas>
+        <span class="spark-caption" id="sparkCaption">depth over time</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- -------------------------------------------------------- side panel -->
+  <section class="panel side-panel">
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="settings" role="tab">⚙ Settings</button>
+      <button class="tab" data-tab="history" role="tab">🕘 History <em id="histCount">0</em></button>
+      <button class="tab" data-tab="insights" role="tab">💡 Insights</button>
+      <button class="tab" data-tab="lessons" role="tab">📖 Lessons <em id="lessonCount" hidden>0</em></button>
+    </nav>
+
+    <!-- settings -->
+    <div class="tab-body active" id="tab-settings">
+      <div class="settings-head">
+        <div class="settings-state">
+          <span class="badge" id="cfgBadge">optimal</span>
+          <p id="cfgBadgeText">These are the best settings learned so far.</p>
+        </div>
+        <div class="settings-buttons">
+          <button class="btn btn-primary" id="btnApply" disabled>Apply &amp; restart</button>
+          <button class="btn btn-gold" id="btnOptimal">✨ Use optimal</button>
+        </div>
+      </div>
+      <div id="settingsGroups" class="settings-groups"></div>
+    </div>
+
+    <!-- history -->
+    <div class="tab-body" id="tab-history">
+      <div class="hist-head">
+        <div class="hist-stats" id="histStats"></div>
+        <button class="btn btn-ghost btn-danger btn-small" id="btnClear">Clear history</button>
+      </div>
+      <div id="historyList" class="history-list"></div>
+      <button class="btn btn-ghost load-more" id="btnMore" hidden>Load older attempts</button>
+    </div>
+
+    <!-- insights -->
+    <div class="tab-body" id="tab-insights">
+      <div class="insights-header">
+        <div class="insights-stats" id="insightsStats"></div>
+        <button class="btn btn-primary" id="btnAnalyze">
+          <span class="icon">🔎</span><span class="btn-text">Run analysis</span>
+        </button>
+      </div>
+      <div class="insights-intro" id="insightsEmpty" hidden></div>
+      <div id="insightsFindings" class="findings-container"></div>
+    </div>
+
+    <!-- lessons -->
+    <div class="tab-body" id="tab-lessons">
+      <div id="lessonsBody" class="lessons-body"></div>
+    </div>
+  </section>
+</main>
+
+<div class="legend" id="legend" aria-label="Colour legend"></div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="/js/app.js"></script>
+</body>
+</html>

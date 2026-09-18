@@ -1,0 +1,17 @@
+# Compiled Java classes
+java/classes/
+*.class
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Runtime/generated data (regenerated on run; see README)
+data/eternity2.sqlite
+
+# Local IDE/tool state
+.kilo/
+
+# OS cruft
+.DS_Store
+Thumbs.db
