@@ -87,6 +87,34 @@ SETTINGS = [
     },
 
     {
+        "key": "tailFromDepth",
+        "label": "Tail starts at",
+        "kind": "int",
+        "group": "Search strategy",
+        "min": 0, "max": 256, "step": 4,
+        "default": 244,
+        "tunable": True,
+        # Inert while the allowance is zero, which is the default -- so the
+        # tuner must not be credited for attempts this could not have changed.
+        "activeWhen": {"key": "tailBreakBonus", "values": [1, 2, 3, 4, 5, 6, 7, 8]},
+        "blurb": "Fixed scan only: the square from which the tail allowance is added on top of the slip schedule. Does nothing while the allowance is zero.",
+        "low": "0 = the allowance applies to the whole board",
+        "high": "256 = the allowance never applies",
+    },
+    {
+        "key": "tailBreakBonus",
+        "label": "Tail allowance",
+        "kind": "int",
+        "group": "Search strategy",
+        "min": 0, "max": 8, "step": 1,
+        "default": 0,
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: extra mismatched edges the last squares may leave, beyond what the slip schedule permits. The published schedules cap the total, so a board that cannot finish its last squares perfectly cannot finish at all -- and an empty square costs two edges where a mismatch costs one.",
+        "low": "0 = the published schedule, unchanged",
+        "high": "8 = comfortably past the point where more stops helping",
+    },
+    {
         "key": "quotaSchedule",
         "label": "Colour quota",
         "kind": "enum",

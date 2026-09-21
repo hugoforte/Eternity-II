@@ -17,20 +17,31 @@ the interesting part is watching how different strategies behave.
 
 ## Where the solver stands today
 
-Five minutes, one core, measured on this code:
+One billion nodes, one core, measured on this code — about thirty seconds each:
 
-| settings | nodes/sec | pieces placed | matched edges |
-|---|---|---|---|
-| the app's defaults (scan engine, Verhaard slipping) | 39M | 249 / 256 | 454 / 480 |
-| the same, plus the colour quota | 26M | **250 / 256** | **456 / 480** |
-| world record, set 2021, never beaten | — | — | 470 / 480 |
+| settings | nodes/sec | matched edges | pieces placed | error-free |
+|---|---|---|---|---|
+| the app's defaults (scan engine, Verhaard slipping) | 38.7M | 450 / 480 | 247 / 256 | 207 |
+| the same, plus the colour quota | 25.9M | 454 / 480 | 249 / 256 | 207 |
+| the same, plus a tail allowance (`--tailBreakBonus=4`) | 28.2M | **464 / 480** | **256 / 256** | 207 |
+| world record, set 2021, never beaten | — | 470 / 480 | 256 / 256 | — |
+
+Given ten times the budget the first two reach 456 / 480 and 250 / 256; the tail allowance gets past
+that at a tenth of the compute.
+
+**Read the second column.** Eternity II is scored in matched edges out of 480. *Pieces placed* is
+not a score once the solver is allowed to break edges deliberately — any board can be filled to
+256 / 256 by breaking enough of them, and the 464 above carries sixteen mismatches. *Error-free* is
+the companion that cannot be bought: the most tiles this engine has ever placed with nothing
+mismatched at all.
 
 Reproduce both from the command line. Note that `core.ScanSolver` starts from the raw defaults rather
 than the app's, so the slip schedule has to be named explicitly:
 
 ```sh
-java -cp java/classes core.ScanSolver 12000000000 --slipSchedule=verhaard
-java -cp java/classes core.ScanSolver 8000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
+java -cp java/classes core.ScanSolver 1000000000 --slipSchedule=verhaard
+java -cp java/classes core.ScanSolver 1000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
+java -cp java/classes core.ScanSolver 1000000000 --slipSchedule=verhaard --quotaSchedule=blackwood --tailBreakBonus=4
 ```
 
 The colour quota is **off by default**, and that is deliberate — it abandons subtrees that may hold
@@ -38,10 +49,12 @@ solutions, so the shipped engine stays exhaustive and the cross-validation tests
 Switch it on for a score-chasing run: it gives up a third of its throughput and still comes out a
 piece and two edges ahead.
 
-**Do not read 456 against 470 as "fourteen edges short".** The record is produced by a different kind
-of search — one that runs under a ten-break ceiling until it completes, so a completed run scores 470
-or better by construction and cannot produce a 469. There is no ladder between the two.
-[docs/TYING-THE-RECORD.md](docs/TYING-THE-RECORD.md) sets out what tying it would actually cost.
+**Do not read 464 against 470 as "six edges short".** They are on the same scale now — a completing
+run scores exactly `480 - breaks`, and this engine completes with sixteen where the record completes
+with ten — but the steps are not equal in cost. Tightening the ceiling is precisely what makes
+completion rare, and that rarity is the whole expense.
+[docs/TYING-THE-RECORD.md](docs/TYING-THE-RECORD.md) sets out what tying it would actually cost, and
+the answer is measured in tens of thousands of core-hours.
 
 ---
 

@@ -40,8 +40,111 @@ public final class EdgeSlippingTest {
         itReachesFurtherThanTheExactSearch();
         itIsRepeatable();
         itReportsTheDeepestErrorFreePrefix();
+        itLetsTheTailSpendMore();
 
         T.endSection();
+    }
+
+    // ------------------------------------------------------- tail allowance
+
+    /**
+     * The published schedules are cumulative ceilings, so a board that cannot
+     * finish its last cells perfectly cannot finish at all -- and past the
+     * depth where every cell joins two edges and can break at most one, a
+     * further placement is worth net +1 edge or better.  The tail allowance is
+     * the dial that lets those cells break; this pins its shape and the one
+     * result it was built for.
+     */
+    private static void itLetsTheTailSpendMore() {
+        SolverConfig off = new SolverConfig();
+        off.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        int[] plain = new ScanSolver(Instance.eternity2(), off).breakCeilings();
+
+        SolverConfig on = new SolverConfig();
+        on.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        on.tailFromDepth = 244;
+        on.tailBreakBonus = 4;
+        int[] raised = new ScanSolver(Instance.eternity2(), on).breakCeilings();
+
+        T.eq("below the tail depth the ceiling is untouched", plain[243], raised[243]);
+        T.eq("at the tail depth it is four higher", plain[244] + 4, raised[244]);
+        T.eq("and it stays four higher to the last cell", plain[256] + 4, raised[256]);
+
+        boolean monotone = true;
+        for (int d = 1; d < raised.length; d++) {
+            if (raised[d] < raised[d - 1]) monotone = false;
+        }
+        T.check("the raised ceiling still never falls", monotone);
+
+        SolverConfig zero = new SolverConfig();
+        zero.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        zero.tailFromDepth = 244;
+        zero.tailBreakBonus = 0;
+        T.eqIntArray("a zero bonus leaves the schedule exactly as published",
+                     plain, new ScanSolver(Instance.eternity2(), zero).breakCeilings());
+
+        // The result the dial was built for: the engine could not finish a
+        // board under a twelve-break ceiling, and finishing is worth more than
+        // the breaks it costs.  A hole costs two edges, a break costs one.
+        SolverConfig full = new SolverConfig();
+        full.engine = SolverConfig.ENGINE_SCAN;
+        full.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        full.quotaColours = "14,22,5";
+        full.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        full.tailFromDepth = 244;
+        full.tailBreakBonus = 6;
+        ScanSolver s = new ScanSolver(Instance.eternity2(), full);
+        s.maxNodes = 100000000L;
+        s.solve();
+
+        T.check("a hundred million nodes now finishes the board",
+                s.bestPlaced == 256, "placed=" + s.bestPlaced);
+        T.check("and beats the best score reachable under the plain ceiling",
+                s.bestMatchedEdges > 456,
+                "score=" + s.bestMatchedEdges + " breaks=" + s.bestBreaks);
+        T.eq("the score is exactly 480 less the edges it broke",
+             480 - s.bestBreaks, s.bestMatchedEdges);
+        T.isNull("and the finished board is legal for the breaks it spent",
+                 Validator.validatePartial(Instance.eternity2(), s.bestBoard,
+                                           false, s.bestBreaks));
+        T.notNull("but it is not a solution",
+                  Validator.validateComplete(Instance.eternity2(), s.bestBoard));
+        T.eq("the validator finds exactly those broken edges",
+             s.bestBreaks,
+             Validator.mismatchedEdges(Instance.eternity2(), s.bestBoard).length / 2);
+
+        // A solved board has every one of its cells error-free, so the running
+        // maximum has to survive the completion return rather than stopping one
+        // short of it.
+        Instance small = Generator.generate(4, 3, 1234L, true, false);
+        ScanSolver solved = new ScanSolver(small, new SolverConfig());
+        solved.setStopAtFirstSolution(true);
+        solved.maxNodes = 2000000L;
+        solved.solve();
+        T.notNull("the 4x4 generated instance is solved", solved.solutionBoard());
+        T.eq("and every cell of a solved board counts as error-free",
+             small.cells, solved.deepestErrorFree);
+
+        // A tail depth at or past the last cell cannot let anything slip, so
+        // the engine must not build slipped tables for it.
+        SolverConfig inert = new SolverConfig();
+        inert.slipSchedule = SolverConfig.SLIP_NONE;
+        inert.tailFromDepth = 256;
+        inert.tailBreakBonus = 4;
+        ScanSolver none = new ScanSolver(Instance.eternity2(), inert);
+        T.eq("a tail starting past the last cell leaves the index perfect",
+             none.candidateEntryCount(), none.perfectEntryCount());
+
+        // The published depths scale with the board, and so must this one, or
+        // the dial is silently dead on every size but 16x16.
+        SolverConfig scaled = new SolverConfig();
+        scaled.slipSchedule = SolverConfig.SLIP_NONE;
+        scaled.tailFromDepth = 128;
+        scaled.tailBreakBonus = 1;
+        int[] ceil = new ScanSolver(small, scaled).breakCeilings();
+        T.eq("the tail depth scales to the board, so 128 of 256 is half of 16",
+             0, ceil[7]);
+        T.eq("and the allowance is live from there on", 1, ceil[8]);
     }
 
     // -------------------------------------------------- error-free prefix

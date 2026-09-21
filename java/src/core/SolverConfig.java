@@ -94,6 +94,27 @@ public final class SolverConfig {
     public int     fillOrder           = FILL_BANDED;
     /** How many mismatched edges {@link ScanSolver} may leave, by depth. */
     public int     slipSchedule        = SLIP_NONE;
+    /**
+     * Depth from which {@link #tailBreakBonus} is added to the slip ceiling.
+     * Matches {@code server/schema.py}, so the CLI and the app agree here --
+     * with a zero bonus it makes no difference either way.
+     */
+    public int     tailFromDepth       = 244;
+    /**
+     * Extra mismatched edges allowed at and beyond {@link #tailFromDepth}, on
+     * top of whatever {@link #slipSchedule} permits there.
+     *
+     * The published schedules are cumulative ceilings that stop the search
+     * completing a board: past the point where every cell joins two edges and
+     * can break at most one, a further placement is worth net +1 edge or
+     * better, so a ceiling that forbids it costs score. This is the dial that
+     * lets the tail spend more.
+     *
+     * Accepted up to 64 here; {@code server/schema.py} offers the tuner only
+     * 0-8, because the gain saturates around +4 and every arm past that is one
+     * the bandit would have to rule out for itself.
+     */
+    public int     tailBreakBonus      = 0;
     /** How many sides of {@link #quotaColours} must be spent by each depth. */
     public int     quotaSchedule       = QUOTA_NONE;
     /**
@@ -142,6 +163,8 @@ public final class SolverConfig {
         c.engine = engine;
         c.fillOrder = fillOrder;
         c.slipSchedule = slipSchedule;
+        c.tailFromDepth = tailFromDepth;
+        c.tailBreakBonus = tailBreakBonus;
         c.quotaSchedule = quotaSchedule;
         c.quotaColours = quotaColours;
         c.cellOrder = cellOrder;
@@ -364,6 +387,8 @@ public final class SolverConfig {
         sb.append("\"fillOrder\":\"").append(fillOrderName(fillOrder)).append("\",");
         sb.append("\"slipSchedule\":\"").append(slipScheduleName(slipSchedule)).append("\",");
         sb.append("\"quotaSchedule\":\"").append(quotaScheduleName(quotaSchedule)).append("\",");
+        sb.append("\"tailFromDepth\":").append(tailFromDepth).append(",");
+        sb.append("\"tailBreakBonus\":").append(tailBreakBonus).append(",");
         sb.append("\"quotaColours\":\"").append(quotaColours).append("\",");
         sb.append("\"cellOrder\":\"").append(cellOrderName(cellOrder)).append("\",");
         sb.append("\"hybridThreshold\":").append(hybridThreshold).append(',');
@@ -403,6 +428,8 @@ public final class SolverConfig {
         else if (k.equals("fillOrder")) fillOrder = parseFillOrder(v);
         else if (k.equals("slipSchedule")) slipSchedule = parseSlipSchedule(v);
         else if (k.equals("quotaSchedule")) quotaSchedule = parseQuotaSchedule(v);
+        else if (k.equals("tailFromDepth")) tailFromDepth = clampInt(v, 0, 256, tailFromDepth);
+        else if (k.equals("tailBreakBonus")) tailBreakBonus = clampInt(v, 0, 64, tailBreakBonus);
         else if (k.equals("quotaColours")) quotaColours = (parseColourList(v) == null) ? quotaColours : v.trim();
         else if (k.equals("cellOrder")) cellOrder = parseCellOrder(v);
         else if (k.equals("hybridThreshold")) hybridThreshold = clampInt(v, 1, 4096, hybridThreshold);

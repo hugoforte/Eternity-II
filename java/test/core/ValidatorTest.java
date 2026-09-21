@@ -176,6 +176,36 @@ public final class ValidatorTest {
         catch (IllegalArgumentException e) { threwOnLength = true; }
         T.threw("an error-free prefix longer than the board fails loudly", threwOnLength);
 
+        // --- where the broken edges are ------------------------------------
+        // A score says how many edges are wrong; this says which, and a tail
+        // cannot be tuned against a number that does not say where.
+        T.eq("a whole solution has no mismatched edges",
+             0, Validator.mismatchedEdges(inst, good).length);
+
+        int[] oneBad = copy(good);
+        oneBad[5] = (5 << 2) | 1;
+        int[] bad = Validator.mismatchedEdges(inst, oneBad);
+        T.check("a rotated piece reports at least one mismatched edge",
+                bad.length >= 2, "pairs=" + (bad.length / 2));
+        T.check("every reported pair is genuinely adjacent",
+                adjacentPairs(inst, bad), "pairs=" + (bad.length / 2));
+
+        // The three ways an edge can be is exhaustive: matched, mismatched, or
+        // not joined at all because a cell is empty.
+        T.eq("matched plus mismatched accounts for every joined edge",
+             joinedEdges(inst, oneBad),
+             Validator.matchedEdges(inst, oneBad) + bad.length / 2);
+
+        int[] holed = copy(good);
+        holed[5] = -1;
+        T.eq("an empty cell leaves edges unjoined, not mismatched",
+             0, Validator.mismatchedEdges(inst, holed).length);
+
+        boolean threwOnNullBoard = false;
+        try { Validator.mismatchedEdges(inst, null); }
+        catch (IllegalArgumentException e) { threwOnNullBoard = true; }
+        T.threw("listing the broken edges of a null board fails loudly", threwOnNullBoard);
+
         mismatchParityOnEternity2();
 
         T.endSection();
@@ -310,6 +340,28 @@ public final class ValidatorTest {
         int[] board = new int[inst.cells];
         for (int cell = 0; cell < inst.cells; cell++) board[cell] = -1;
         return board;
+    }
+
+    /** Every adjacency of the board with a placed piece on both sides. */
+    private static int joinedEdges(Instance inst, int[] board) {
+        int n = inst.n, joined = 0;
+        for (int cell = 0; cell < inst.cells; cell++) {
+            if (board[cell] < 0) continue;
+            int r = cell / n, c = cell - r * n;
+            if (c < n - 1 && board[cell + 1] >= 0) joined++;
+            if (r < n - 1 && board[cell + n] >= 0) joined++;
+        }
+        return joined;
+    }
+
+    private static boolean adjacentPairs(Instance inst, int[] pairs) {
+        int n = inst.n;
+        for (int k = 0; k < pairs.length; k += 2) {
+            int d = pairs[k + 1] - pairs[k];
+            if (d != 1 && d != n) return false;
+            if (d == 1 && pairs[k] / n != pairs[k + 1] / n) return false;
+        }
+        return true;
     }
 
     private static int[] copy(int[] a) {

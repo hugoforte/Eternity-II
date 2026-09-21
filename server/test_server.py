@@ -149,6 +149,15 @@ class SchemaTest(unittest.TestCase):
             self.assertEqual(schema.is_active("slipSchedule", cfg), active,
                              "engine=%s" % engine)
 
+    def test_the_tail_depth_only_counts_when_the_allowance_is_non_zero(self):
+        # tailFromDepth changes nothing while tailBreakBonus is 0, which is the
+        # default, so crediting it for those attempts would feed the tuner noise.
+        for bonus, active in ((0, False), (1, True), (4, True)):
+            cfg = dict(schema.defaults(), tailBreakBonus=bonus)
+            self.assertEqual(schema.is_active("tailFromDepth", cfg), active,
+                             "tailBreakBonus=%s" % bonus)
+        self.assertFalse(schema.is_active("tailFromDepth", {}))
+
     def test_a_missing_dependency_value_falls_back_to_its_default(self):
         self.assertFalse(schema.is_active("restartMultiplier", {}))
         # engine's own default is "scan", so an omitted engine falls back to

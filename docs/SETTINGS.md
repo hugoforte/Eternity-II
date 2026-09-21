@@ -85,6 +85,40 @@ Only has an effect when Engine is **Fixed scan**.
 
 Default: **Verhaard** (`verhaard`)
 
+### Tail starts at
+
+`tailFromDepth` &middot; slider &middot; learned automatically
+
+Fixed scan only: the square from which the tail allowance is added on top of the slip schedule. Does nothing while the allowance is zero.
+
+Only has an effect when Tail allowance is **1**, **2**, **3**, **4**, **5**, **6**, **7** or **8**.
+
+Range: `0` to `256` in steps of `4`
+
+| End of the slider | What happens |
+|---|---|
+| lowest | 0 = the allowance applies to the whole board |
+| highest | 256 = the allowance never applies |
+
+Default: `244`
+
+### Tail allowance
+
+`tailBreakBonus` &middot; slider &middot; learned automatically
+
+Fixed scan only: extra mismatched edges the last squares may leave, beyond what the slip schedule permits. The published schedules cap the total, so a board that cannot finish its last squares perfectly cannot finish at all -- and an empty square costs two edges where a mismatch costs one.
+
+Only has an effect when Engine is **Fixed scan**.
+
+Range: `0` to `8` in steps of `1`
+
+| End of the slider | What happens |
+|---|---|
+| lowest | 0 = the published schedule, unchanged |
+| highest | 8 = comfortably past the point where more stops helping |
+
+Default: `0`
+
 ### Colour quota
 
 `quotaSchedule` &middot; choice &middot; learned automatically

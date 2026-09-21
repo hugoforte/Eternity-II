@@ -96,6 +96,12 @@ public final class Bench {
         if (which.equals("colours")) {
             colourBenchmark((args.length > 1) ? parseLong(args[1], 100000000L) : 100000000L);
         }
+        if (which.equals("endgame")) {
+            long budget = (args.length > 1) ? parseLong(args[1], 1000000000L) : 1000000000L;
+            int from = (args.length > 2) ? (int) parseLong(args[2], 244L) : 244;
+            int maxBonus = (args.length > 3) ? (int) parseLong(args[3], 8L) : 8;
+            endgameBenchmark(budget, from, maxBonus);
+        }
         if (which.equals("seeds")) {
             int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
             long budget = (args.length > 2) ? parseLong(args[2], 20000000L) : 20000000L;
@@ -204,7 +210,7 @@ public final class Bench {
         System.out.println("=================================================================");
         System.out.println(" ScanSolver on Eternity II: edge slipping off vs on, equal nodes");
         System.out.println("=================================================================");
-        System.out.println(" budget      schedule    ms      nodes/sec    placed   edges   perfect  breaks");
+        System.out.println(" budget      schedule    ms      nodes/sec    score    tiles    perfect  breaks");
 
         int[] schedules = { SolverConfig.SLIP_NONE, SolverConfig.SLIP_BLACKWOOD,
                             SolverConfig.SLIP_VERHAARD };
@@ -221,8 +227,8 @@ public final class Bench {
                     + " " + pad(SolverConfig.slipScheduleName(schedules[i]), 11)
                     + " " + pad("" + ms, 7)
                     + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+                    + " " + pad(s.bestMatchedEdges + "/480", 8)
                     + " " + pad(s.bestPlaced + "/256", 8)
-                    + " " + pad(s.bestMatchedEdges + "/480", 7)
                     + " " + pad(s.deepestErrorFree + "/256", 8)
                     + " " + s.bestBreaks);
                 String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
@@ -230,6 +236,92 @@ public final class Bench {
                 if (err != null) System.out.println("   INVALID BOARD: " + err);
             }
         }
+        System.out.println();
+    }
+
+    // ---------------------------------------------------------------- endgame
+
+    /**
+     * What the tail is allowed to spend, against what it scores.
+     *
+     * The published schedules are cumulative ceilings that cap how many edges
+     * a board may break in total.  Past the depth where every cell joins two
+     * edges and can break at most one, a further placement is worth net +1
+     * edge or better -- so a ceiling that stops the board completing costs
+     * score outright.  This sweeps the extra allowance and reports what each
+     * rung buys, on the four numbers that matter.
+     */
+    private static void endgameBenchmark(long budget, int tailFrom, int maxBonus) {
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: what the tail buys");
+        System.out.println(" fillOrder=banded  slipSchedule=verhaard  quotaColours="
+                           + BLACKWOOD_COLOURS + "  tailFromDepth=" + tailFrom);
+        System.out.println("=================================================================");
+        System.out.println(" budget      bonus  ms      nodes/sec    score    tiles    perfect  breaks");
+
+        ScanSolver best = null;
+        int bestScore = -1;
+        for (int bonus = 0; bonus <= maxBonus; bonus++) {
+            SolverConfig cfg = new SolverConfig();
+            cfg.engine = SolverConfig.ENGINE_SCAN;
+            cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+            cfg.quotaColours = BLACKWOOD_COLOURS;
+            cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+            cfg.tailFromDepth = tailFrom;
+            cfg.tailBreakBonus = bonus;
+            ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+            s.maxNodes = budget;
+            long t0 = System.nanoTime();
+            s.solve();
+            long ms = (System.nanoTime() - t0) / 1000000L;
+            System.out.println(" " + pad("" + budget, 11)
+                + " " + pad("+" + bonus, 6)
+                + " " + pad("" + ms, 7)
+                + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+                + " " + pad(s.bestMatchedEdges + "/480", 8)
+                + " " + pad(s.bestPlaced + "/256", 8)
+                + " " + pad(s.deepestErrorFree + "/256", 8)
+                + " " + s.bestBreaks);
+            String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
+                                                   false, s.bestBreaks);
+            if (err != null) System.out.println("   INVALID BOARD: " + err);
+            if (s.bestMatchedEdges > bestScore) { bestScore = s.bestMatchedEdges; best = s; }
+        }
+        System.out.println();
+        if (best != null) whereTheDamageSits(best);
+    }
+
+    /**
+     * Where the best board's mismatched edges actually are, by the depth at
+     * which the later of the two cells went down.  A score says how many edges
+     * are wrong; this says where, which is what a tail has to be tuned against.
+     */
+    private static void whereTheDamageSits(ScanSolver s) {
+        Instance inst = Instance.eternity2();
+        int[] bad = Validator.mismatchedEdges(inst, s.bestBoard);
+        int[] depthOf = new int[inst.cells];
+        for (int c = 0; c < inst.cells; c++) depthOf[c] = -1;
+        for (int d = 0; d < s.bestOrderLength; d++) depthOf[s.bestOrderCells()[d]] = d;
+
+        System.out.println(" the best board's " + (bad.length / 2)
+                           + " mismatched edges, by the depth that closed them");
+        System.out.println(" band        edges");
+        int[] bands = { 0, 64, 128, 192, 224, 240, 248, 256 };
+        int[] counts = new int[bands.length];
+        for (int k = 0; k < bad.length; k += 2) {
+            int later = Math.max(depthOf[bad[k]], depthOf[bad[k + 1]]);
+            for (int i = bands.length - 1; i >= 0; i--) {
+                if (later >= bands[i]) { counts[i]++; break; }
+            }
+        }
+        for (int i = 0; i < bands.length; i++) {
+            if (counts[i] == 0) continue;
+            String hi = (i + 1 < bands.length) ? ("" + (bands[i + 1] - 1)) : "255";
+            System.out.println(" " + pad(bands[i] + "-" + hi, 11) + " " + counts[i]);
+        }
+        int placed = s.bestPlaced;
+        System.out.println(" unjoined edges from " + (256 - placed) + " empty cells: "
+                           + (480 - s.bestMatchedEdges - (bad.length / 2)));
         System.out.println();
     }
 
@@ -250,7 +342,7 @@ public final class Bench {
         System.out.println(" fillOrder=banded  slipSchedule=verhaard  quotaColours="
                            + BLACKWOOD_COLOURS);
         System.out.println("=================================================================");
-        System.out.println(" budget      quota   ms      nodes/sec    placed   edges   perfect  breaks");
+        System.out.println(" budget      quota   ms      nodes/sec    score    tiles    perfect  breaks");
 
         ScanSolver ungated = null;
         for (int b = 0; b < budgets.length; b++) {
@@ -279,8 +371,8 @@ public final class Bench {
             + " " + pad(gated ? "on" : "off", 7)
             + " " + pad("" + ms, 7)
             + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+            + " " + pad(s.bestMatchedEdges + "/480", 8)
             + " " + pad(s.bestPlaced + "/256", 8)
-            + " " + pad(s.bestMatchedEdges + "/480", 7)
             + " " + pad(s.deepestErrorFree + "/256", 8)
             + " " + s.bestBreaks);
         String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,

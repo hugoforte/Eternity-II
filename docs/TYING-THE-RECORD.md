@@ -1,6 +1,6 @@
 # Tying the record
 
-This engine places 250 of 256 pieces and matches 456 of 480 edges. The world record is 470. The
+This engine completes all 256 placements and matches 464 of 480 edges. The world record is 470. The
 arithmetic is easy and the conclusion it invites — *fourteen edges short* — is wrong in a specific
 way, and the way it is wrong changes what anyone should do next.
 
@@ -13,7 +13,7 @@ inline citations on every claim; this is the argument, not the evidence.
 
 | | |
 |---|---|
-| Best board | **250 / 256 pieces, 456 / 480 matched edges** |
+| Best board | **256 / 256 pieces, 464 / 480 matched edges** (16 breaks, 1B nodes) |
 | Engine | fixed-order scan, two-colour candidate index, Verhaard's slip schedule |
 | Throughput | ~40M nodes/sec, one core |
 | Published reference | Blackwood's own solver: 248 pieces / 454 edges in 60-120 s on one Apple M1 core |
@@ -53,6 +53,26 @@ benchmarked at, which re-scores to 454 edges, is one of those.
 are outputs of two different devices. A search that climbs a score function and a search that runs
 until it completes under a ten-break ceiling are not the same search made better. The question
 "how do we get fourteen more edges" has no answer because it is not the question the record answers.
+
+### Revisited (2026-09-21): half of that is wrong, and the half that survives is the half that costs
+
+The paragraph above was written when this engine had never finished a board. It now does. A tail
+allowance on top of the slip schedule (`tailBreakBonus`, see `SOLVER.md`) lets the last cells break,
+and at a billion nodes the engine completes all 256 placements with sixteen mismatched edges, for
+**464 / 480**.
+
+So the "two different devices" framing does not survive. A completing search scores exactly
+`480 - breaks`, and that *is* one staircase: 464 at sixteen breaks, 470 at ten. What the quoted
+claim really describes is a property of a **ten-break ceiling**, not of the puzzle — under a
+sixteen-break ceiling this engine emits a 464 routinely, and a 469 is emitted by any completing run
+that spends eleven.
+
+**What survives is the expensive half.** The question is now well posed — *complete with six fewer
+breaks* — and being well posed makes it no easier. Tightening the ceiling is precisely what makes
+completion rare, and how rare is the one number the rest of this document is about. The cost
+analysis below is unaffected: it was always a cost of completing under a tight ceiling, never a cost
+of climbing a score function. What changes is only the rhetoric. It is one staircase whose steps get
+exponentially more expensive, not two unrelated machines, and **nothing here brings a solve nearer**.
 
 The right question is one number:
 

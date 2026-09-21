@@ -267,6 +267,56 @@ public final class Validator {
         return length;
     }
 
+    /**
+     * Every mismatched edge of a board, as flat pairs of cells: entries
+     * {@code 2k} and {@code 2k+1} are the two cells facing each other across
+     * the k-th bad edge, the first being the west or north one.
+     *
+     * The board's score says how many edges are wrong; this says *which*, and
+     * without it a tail cannot be tuned because nothing can see where the
+     * damage sits. Edges with an empty cell on either side are not counted --
+     * they are not mismatched, they are unjoined.
+     */
+    public static int[] mismatchedEdges(Instance inst, int[] boardVariant) {
+        if (boardVariant == null) throw new IllegalArgumentException("board is null");
+        if (boardVariant.length != inst.cells) {
+            throw new IllegalArgumentException("board has " + boardVariant.length
+                + " cells, expected " + inst.cells);
+        }
+        int n = inst.n;
+        int[] out = new int[32];
+        int w = 0;
+        for (int cell = 0; cell < inst.cells; cell++) {
+            int v = boardVariant[cell];
+            if (v < 0) continue;
+            int p = inst.variantSides(v >>> 2, v & 3);
+            int r = cell / n, c = cell - r * n;
+            if (c < n - 1) {
+                int nb = boardVariant[cell + 1];
+                if (nb >= 0 && Sides.right(p) != Sides.left(inst.variantSides(nb >>> 2, nb & 3))) {
+                    if (w + 2 > out.length) out = grow(out);
+                    out[w++] = cell; out[w++] = cell + 1;
+                }
+            }
+            if (r < n - 1) {
+                int nb = boardVariant[cell + n];
+                if (nb >= 0 && Sides.bottom(p) != Sides.top(inst.variantSides(nb >>> 2, nb & 3))) {
+                    if (w + 2 > out.length) out = grow(out);
+                    out[w++] = cell; out[w++] = cell + n;
+                }
+            }
+        }
+        int[] trimmed = new int[w];
+        System.arraycopy(out, 0, trimmed, 0, w);
+        return trimmed;
+    }
+
+    private static int[] grow(int[] a) {
+        int[] b = new int[a.length * 2];
+        System.arraycopy(a, 0, b, 0, a.length);
+        return b;
+    }
+
     private static int sidesAt(Instance inst, int[] board, int cell) {
         int v = board[cell];
         return inst.variantSides(v >>> 2, v & 3);
