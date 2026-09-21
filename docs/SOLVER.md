@@ -713,6 +713,24 @@ enough breaks. The error-free column does not move at all across the sweep — 2
 100M, 207 at every rung at 1B — because the allowance buys depth in the tail and changes nothing
 about how far the search gets cleanly.
 
+**Where the allowance is spent matters as much as how much of it there is.** Four extra breaks, one
+billion nodes, the same configuration, varying only the depth they become available:
+
+| `tailFromDepth` | score | tiles | breaks |
+|---|---|---|---|
+| 224 | 450 / 480 | 249 / 256 | 16 |
+| 232 | 455 / 480 | 251 / 256 | 15 |
+| 240 | 458 / 480 | 253 / 256 | 16 |
+| **244** | **464 / 480** | **256 / 256** | 16 |
+| 248 | 458 / 480 | 253 / 256 | 16 |
+
+**244 is a real optimum, and offering the allowance early is worse than not offering it at all** —
+450 at depth 224 against 454 with no bonus whatever. Breaks spent before the tail buy depth the
+search would have reached anyway, and then are not there when the last cells need them. The peak
+sits at 256 - 12, the last twelve cells, which is the same window the 2026 fleet identified from the
+other direction. Their claim that the score gap *lives* in those cells does not hold here, but their
+claim that it is the window worth acting on does.
+
 **Where the damage sits, from `core.Bench endgame`'s own report on the 464 board:**
 
 | band | mismatched edges |
