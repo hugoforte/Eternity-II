@@ -86,6 +86,11 @@ class Tuner:
           adj   average score *relative to other attempts of the same attempt
                 length*, i.e. "pieces better than a typical run of that budget"
 
+        Only attempts a setting could have influenced count toward its arms:
+        see ``schema.is_active``.  ``n`` is therefore the number of *relevant*
+        attempts, which is what the optimal table and the insights report as
+        their support.
+
         ``adj`` is what the learner actually optimises.  Attempt length is
         itself a tunable setting, so a 100k-step run can never reach as deep as
         a 100M-step one; comparing raw depths across budgets would make every
@@ -119,6 +124,11 @@ class Tuner:
             for setting in schema.tunable_settings():
                 key = setting["key"]
                 if key not in cfg:
+                    continue
+                # A conditional setting that could not reach the search says
+                # nothing about this attempt; crediting its arm anyway is how a
+                # value chosen at random ends up looking significant.
+                if not schema.is_active(key, cfg):
                     continue
                 arm = _arm_key(schema.coerce(key, cfg[key]))
                 bucket = stats[key].setdefault(

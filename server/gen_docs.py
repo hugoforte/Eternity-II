@@ -35,6 +35,10 @@ Do not edit it by hand; change the schema and regenerate.
   reachable on purpose: part of the fun is watching a setting fail.
 * **Learned** says whether the built-in learner is allowed to tune the value.
   The random seed is excluded, because it is noise rather than strategy.
+* **Only has an effect when ...** marks a setting that depends on another one.
+  Attempts where the condition did not hold are not counted as evidence about
+  it, so what the Insights tab says about it is based on the runs it could
+  really have changed.
 
 ## A note on safety
 
@@ -88,6 +92,26 @@ def fmt_value(setting, value):
     return "`%s`" % value
 
 
+def option_label(setting, value):
+    if setting["kind"] == "enum":
+        for option in setting["options"]:
+            if option["value"] == value:
+                return option["label"]
+    return str(value)
+
+
+def fmt_dependency(setting):
+    """The "this only matters when ..." line, or None for a plain setting."""
+    dependency = setting.get("activeWhen")
+    if dependency is None:
+        return None
+    other = schema.BY_KEY[dependency["key"]]
+    values = ["**%s**" % option_label(other, v) for v in dependency["values"]]
+    if len(values) > 1:
+        values = ["%s or %s" % (", ".join(values[:-1]), values[-1])]
+    return "Only has an effect when %s is %s." % (other["label"], values[0])
+
+
 def pretty_int(value):
     if value >= 1_000_000 and value % 100_000 == 0:
         return "%gM" % (value / 1_000_000.0)
@@ -112,6 +136,9 @@ def render():
                 "learned automatically" if setting.get("tunable", True)
                 else "**not** tuned by the learner"))
             out.append("%s\n" % setting["blurb"])
+            dependency = fmt_dependency(setting)
+            if dependency:
+                out.append("%s\n" % dependency)
 
             if setting["kind"] == "enum":
                 out.append("| Choice | What it does |")

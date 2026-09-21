@@ -226,7 +226,9 @@ newest board is remembered, which is why **Back to live** is instant.
 
 One place:
 
-1. Add an entry to `SETTINGS` in `server/schema.py`.
+1. Add an entry to `SETTINGS` in `server/schema.py`. If the setting only
+   reaches the search under some other setting's value, declare that with
+   `activeWhen` so the learner ignores attempts it could not have changed.
 2. Handle the key in `SolverConfig.apply()` and use it in `MrvSolver`.
 3. `python3 server/gen_docs.py`.
 

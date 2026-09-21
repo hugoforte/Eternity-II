@@ -98,6 +98,61 @@ class SchemaTest(unittest.TestCase):
             self.assertIn("=", arg)
         self.assertIn("--greyInteriorPruning=true", args)
 
+    def test_a_setting_with_no_dependency_is_always_active(self):
+        cfg = schema.defaults()
+        self.assertTrue(schema.is_active("cellOrder", cfg))
+        self.assertTrue(schema.is_active("nodeBudget", cfg))
+
+    def test_restart_growth_only_counts_under_the_geometric_policy(self):
+        # MrvSolver.restartBudget() reads restartMultiplier on the geometric
+        # branch and nowhere else.
+        for policy, active in (("geometric", True), ("fixed", False),
+                               ("luby", False), ("none", False)):
+            cfg = dict(schema.defaults(), restartPolicy=policy)
+            self.assertEqual(schema.is_active("restartMultiplier", cfg), active,
+                             "restartMultiplier under restartPolicy=%s" % policy)
+
+    def test_restart_interval_counts_under_every_policy_but_none(self):
+        for policy, active in (("geometric", True), ("fixed", True),
+                               ("luby", True), ("none", False)):
+            cfg = dict(schema.defaults(), restartPolicy=policy)
+            self.assertEqual(schema.is_active("restartBase", cfg), active,
+                             "restartBase under restartPolicy=%s" % policy)
+
+    def test_hybrid_switch_point_only_counts_for_the_hybrid_cell_order(self):
+        for order, active in (("hybrid", True), ("mrv", False), ("rowMajor", False)):
+            cfg = dict(schema.defaults(), cellOrder=order)
+            self.assertEqual(schema.is_active("hybridThreshold", cfg), active,
+                             "hybridThreshold under cellOrder=%s" % order)
+
+    def test_tie_breaker_does_not_count_for_a_row_by_row_sweep(self):
+        # A row-major sweep takes the first empty cell, so nothing ever ties.
+        for order, active in (("mrv", True), ("hybrid", True), ("rowMajor", False)):
+            cfg = dict(schema.defaults(), cellOrder=order)
+            self.assertEqual(schema.is_active("tieBreak", cfg), active,
+                             "tieBreak under cellOrder=%s" % order)
+
+    def test_a_missing_dependency_value_falls_back_to_its_default(self):
+        self.assertFalse(schema.is_active("restartMultiplier", {}))
+        self.assertTrue(schema.is_active("cellOrder", {}))
+
+    def test_unknown_settings_cannot_be_asked_about(self):
+        with self.assertRaises(KeyError):
+            schema.is_active("noSuchSetting", schema.defaults())
+
+    def test_every_dependency_names_a_real_setting_and_legal_values(self):
+        for setting in schema.SETTINGS:
+            dependency = setting.get("activeWhen")
+            if dependency is None:
+                continue
+            other = schema.BY_KEY.get(dependency["key"])
+            self.assertIsNotNone(other, "%s depends on an unknown setting"
+                                 % setting["key"])
+            for value in dependency["values"]:
+                self.assertIn(value, schema.arms(other),
+                              "%s depends on %s=%r, which is not one of its arms"
+                              % (setting["key"], other["key"], value))
+
     def test_same_config_ignores_the_seed(self):
         a = schema.defaults()
         b = schema.defaults()
@@ -379,6 +434,35 @@ class TunerTest(unittest.TestCase):
     def test_suggest_varies_the_seed(self):
         seeds = {self.tuner.suggest()["randomSeed"] for _ in range(12)}
         self.assertGreater(len(seeds), 1)
+
+    def test_a_setting_that_could_not_act_collects_no_statistics(self):
+        """restartMultiplier is dead unless the policy is geometric."""
+        for multiplier in (110, 400):
+            for _ in range(4):
+                self._attempt({"restartPolicy": "none",
+                               "restartMultiplier": multiplier}, 200)
+        self.assertEqual(self.tuner.arm_stats()["restartMultiplier"], {})
+
+    def test_support_counts_only_the_attempts_a_setting_could_affect(self):
+        for _ in range(4):
+            self._attempt({"restartPolicy": "geometric",
+                           "restartMultiplier": 110}, 120)
+            self._attempt({"restartPolicy": "geometric",
+                           "restartMultiplier": 400}, 200)
+        # plenty of deep runs that restartMultiplier had no say in
+        for _ in range(20):
+            self._attempt({"restartPolicy": "none",
+                           "restartMultiplier": 400}, 250)
+
+        stats = self.tuner.arm_stats()["restartMultiplier"]
+        self.assertEqual(stats["400"]["n"], 4)
+        self.assertEqual(stats["110"]["n"], 4)
+
+        self.tuner.rebuild_insights()
+        insights = [i for i in self.db.load_insights()
+                    if i["setting"] == "restartMultiplier"]
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]["support"], 8)
 
     def test_breakdown_only_reports_values_actually_tried(self):
         for _ in range(3):

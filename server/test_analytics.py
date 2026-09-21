@@ -91,6 +91,26 @@ class AnalyzerTest(AnalyticsBaseTest):
         self.assertGreaterEqual(f['strength'], MIN_STRENGTH)
         self.assertEqual(f['visual']['kind'], 'diverging_bars')
 
+    def test_support_counts_only_attempts_a_setting_could_affect(self):
+        """hybridThreshold does nothing unless the cell order is hybrid."""
+        for _ in range(6):
+            _seed_attempt(self.db, config_overrides={'cellOrder': 'hybrid',
+                                                     'hybridThreshold': 1},
+                          best_depth=150)
+            _seed_attempt(self.db, config_overrides={'cellOrder': 'hybrid',
+                                                     'hybridThreshold': 64},
+                          best_depth=210)
+        for _ in range(30):
+            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv',
+                                                     'hybridThreshold': 64},
+                          best_depth=180)
+        result = self.analyzer.run()
+        matches = [f for f in result['findings']
+                   if f['id'] == 'setting_hybridThreshold']
+        self.assertTrue(matches, 'expected a setting_hybridThreshold finding')
+        self.assertEqual(matches[0]['support'], 12,
+                         'only the hybrid attempts are relevant evidence')
+
     def test_strength_is_clamped_to_something_readable(self):
         """z blows up when two groups are totally separable; clamp kicks in."""
         for _ in range(30):

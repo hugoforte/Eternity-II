@@ -199,6 +199,11 @@ attempts look brilliant. The analyser therefore compares each setting **only
 against attempts of the same length**, and the charts show that adjusted
 figure: *pieces better or worse than a typical run of the same length*.
 
+Settings that only apply in some modes are judged the same way. Restart growth
+is read by the geometric policy alone, so attempts under any other policy are
+not counted as evidence about it, and the support figure beside a finding is
+the number of attempts the setting could really have changed.
+
 ## 5. How the learning works
 
 Two layers, kept deliberately separate:
