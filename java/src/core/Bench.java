@@ -290,28 +290,31 @@ public final class Bench {
     /**
      * Why the gate lands where it does, without running a search.
      *
-     * The ramp demands R(d) quota-colour sides by placement d.  No d pieces of
-     * this set can carry more than the sum of the d largest per-piece counts,
-     * so that difference bounds the room the search has before edge matching
-     * takes any of it away.  The ungated board's own curve is printed beside
-     * it: that is what the engine reaches when nothing is forcing it.
+     * The ramp demands R(d) quota-colour sides by placement d.  A cell's type
+     * fixes which pieces can go in it, so the most the board can be carrying
+     * by depth d is the best corner pieces for the corner cells the fill order
+     * has reached, plus the best edge pieces for its edge cells, plus the best
+     * interior pieces for the rest.  That bounds the room the search has before
+     * edge matching takes any of it away.  The ungated board's own curve is
+     * printed beside it: that is what the engine reaches when nothing is
+     * forcing it.
      */
     private static void reportQuotaHeadroom(String colours, ScanSolver ungated) {
         Instance inst = Instance.eternity2();
         int[] floor = quotaFloor(colours);
         int[] per = quotaCounts(inst, colourList(colours));
-        int[] most = bestPossible(per);
+        int[] most = bestPossible(inst, per);
         int[] natural = (ungated == null) ? null : boardCurve(inst, per, ungated);
 
         System.out.println(" the ramp against what the piece set could possibly supply");
-        System.out.println(" depth   ramp asks   most any pieces hold   ungated board reaches");
+        System.out.println(" depth   ramp asks   ceiling for these cells   ungated board reaches");
         int[] pts = { 16, 32, 64, 96, 128, 160 };
         for (int i = 0; i < pts.length; i++) {
             int d = pts[i];
             String reached = (natural == null || d >= natural.length) ? "-" : ("" + natural[d]);
             System.out.println(" " + pad("" + d, 7)
                 + " " + pad("" + floor[d], 11)
-                + " " + pad("" + most[d], 22)
+                + " " + pad("" + most[d], 24)
                 + " " + reached);
         }
         System.out.println();
@@ -341,7 +344,7 @@ public final class Bench {
             for (int i = 0; i < interior.length; i++) {
                 for (int j = i + 1; j < interior.length; j++) {
                     spec[count] = border[b] + "," + interior[i] + "," + interior[j];
-                    slack[count] = worstSlack(quotaCounts(inst, colourList(spec[count])), floor);
+                    slack[count] = worstSlack(inst, quotaCounts(inst, colourList(spec[count])), floor);
                     count++;
                 }
             }
@@ -356,10 +359,19 @@ public final class Bench {
             spec[j + 1] = sp;
             slack[j + 1] = sl;
         }
+        int blackwoodRank = 0;
+        int negatives = 0;
+        for (int i = 0; i < count; i++) {
+            if (sameColours(spec[i], BLACKWOOD_COLOURS)) blackwoodRank = i + 1;
+            if (slack[i] < 0) negatives++;
+        }
         System.out.println(" " + count + " triples ranked by the least room the ramp ever"
                            + " leaves them;");
-        System.out.println(" a negative number means no arrangement of pieces could satisfy"
-                           + " it at all.");
+        System.out.println(" " + negatives + " are negative, meaning no arrangement of pieces"
+                           + " could satisfy them at all.");
+        System.out.println(" Blackwood's own three rank " + blackwoodRank + " of " + count
+                           + " -- the ranking does not pick them, and the runs below say"
+                           + " it should.");
         System.out.println();
         System.out.println(" colours     total sides   worst slack   ms      placed   edges  breaks");
 
@@ -380,7 +392,7 @@ public final class Bench {
             long ms = (System.nanoTime() - t0) / 1000000L;
             System.out.println(" " + pad(chosen[k], 11)
                 + " " + pad("" + total, 13)
-                + " " + pad("" + worstSlack(per, floor), 13)
+                + " " + pad("" + worstSlack(inst, per, floor), 13)
                 + " " + pad("" + ms, 7)
                 + " " + pad(s.bestPlaced + "/256", 8)
                 + " " + pad(s.bestMatchedEdges + "/480", 7)
@@ -389,6 +401,18 @@ public final class Bench {
             if (err != null) System.out.println("   INVALID BOARD: " + err);
         }
         System.out.println();
+    }
+
+    /** Two colour lists naming the same three colours, in any order. */
+    private static boolean sameColours(String a, String b) {
+        int[] x = colourList(a);
+        int[] y = colourList(b);
+        if (x == null || y == null || x.length != y.length) return false;
+        x = x.clone();
+        y = y.clone();
+        java.util.Arrays.sort(x);
+        java.util.Arrays.sort(y);
+        return java.util.Arrays.equals(x, y);
     }
 
     /** The published ramp, read off an engine built with it. */
@@ -421,20 +445,60 @@ public final class Bench {
     }
 
     /** Depth -> the most quota-colour sides any that many pieces could carry. */
-    private static int[] bestPossible(int[] per) {
-        int[] sorted = new int[per.length];
-        System.arraycopy(per, 0, sorted, 0, per.length);
-        java.util.Arrays.sort(sorted);
-        int[] out = new int[per.length + 1];
-        for (int d = 1; d <= per.length; d++) out[d] = out[d - 1] + sorted[per.length - d];
+    private static int[] bestPossible(Instance inst, int[] per) {
+        int[] order = FillOrder.bandedScan(inst.n);
+
+        // Per-piece counts split by what the piece is, each descending, so the
+        // k best of a class can be read off a prefix sum.
+        int[][] byType = new int[3][];
+        int[] filled = new int[3];
+        for (int t = 0; t < 3; t++) byType[t] = new int[inst.numPieces];
+        for (int id = 0; id < inst.numPieces; id++) {
+            int t = Sides.greyCount(inst.packedSides[id]);
+            if (t > 2) t = 2;
+            byType[t][filled[t]++] = per[id];
+        }
+        int[][] prefix = new int[3][];
+        for (int t = 0; t < 3; t++) {
+            int[] counts = java.util.Arrays.copyOf(byType[t], filled[t]);
+            java.util.Arrays.sort(counts);
+            prefix[t] = new int[filled[t] + 1];
+            for (int k = 1; k <= filled[t]; k++) {
+                prefix[t][k] = prefix[t][k - 1] + counts[filled[t] - k];
+            }
+        }
+
+        // Walk the fill order counting cells of each class, and bound each
+        // class against the cells of that class actually reached.
+        int[] taken = new int[3];
+        int[] out = new int[inst.cells + 1];
+        for (int d = 1; d <= inst.cells; d++) {
+            int cell = order[d - 1];
+            int row = cell / inst.n;
+            int col = cell % inst.n;
+            int edges = ((row == 0 || row == inst.n - 1) ? 1 : 0)
+                      + ((col == 0 || col == inst.n - 1) ? 1 : 0);
+            taken[edges]++;
+            out[d] = prefix[0][taken[0]] + prefix[1][taken[1]] + prefix[2][taken[2]];
+        }
         return out;
     }
 
     /** The tightest the ramp ever gets, over the depths it constrains. */
-    private static int worstSlack(int[] per, int[] floor) {
-        int[] most = bestPossible(per);
+    private static int worstSlack(Instance inst, int[] per, int[] floor) {
+        int[] most = bestPossible(inst, per);
+
+        // Only the depths the gate actually constrains count.  Below the first
+        // breakpoint the ramp asks for nothing, so the slack there is vacuous;
+        // past the last rise the gate is switched off entirely, so a shortfall
+        // there can never abandon a scan.  Scoring either region would rank
+        // triples on arithmetic the engine never consults.
+        int lastRising = 0;
+        for (int d = 1; d < floor.length; d++) if (floor[d] > floor[d - 1]) lastRising = d;
+
         int worst = Integer.MAX_VALUE;
-        for (int d = 1; d < floor.length && d < most.length; d++) {
+        for (int d = 1; d <= lastRising && d < most.length; d++) {
+            if (floor[d] == 0) continue;
             int slack = most[d] - floor[d];
             if (slack < worst) worst = slack;
         }

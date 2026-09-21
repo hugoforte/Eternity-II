@@ -13,7 +13,35 @@ the interesting part is watching how different strategies behave.
 | | |
 |---|---|
 | **Replay** — scrub through the exact order the pieces went down | **Insights** — one card per significant pattern the Analyzer finds |
-| **Lessons** — patterns strong enough to guide future attempts | **Settings** — 14 live-tunable controls with learned defaults |
+| **Lessons** — patterns strong enough to guide future attempts | **Settings** — 18 live-tunable controls with learned defaults |
+
+## Where the solver stands today
+
+Five minutes, one core, measured on this code:
+
+| settings | nodes/sec | pieces placed | matched edges |
+|---|---|---|---|
+| the app's defaults (scan engine, Verhaard slipping) | 39M | 249 / 256 | 454 / 480 |
+| the same, plus the colour quota | 26M | **250 / 256** | **456 / 480** |
+| world record, set 2021, never beaten | — | — | 470 / 480 |
+
+Reproduce both from the command line. Note that `core.ScanSolver` starts from the raw defaults rather
+than the app's, so the slip schedule has to be named explicitly:
+
+```sh
+java -cp java/classes core.ScanSolver 12000000000 --slipSchedule=verhaard
+java -cp java/classes core.ScanSolver 8000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
+```
+
+The colour quota is **off by default**, and that is deliberate — it abandons subtrees that may hold
+solutions, so the shipped engine stays exhaustive and the cross-validation tests keep exercising it.
+Switch it on for a score-chasing run: it gives up a third of its throughput and still comes out a
+piece and two edges ahead.
+
+**Do not read 456 against 470 as "fourteen edges short".** The record is produced by a different kind
+of search — one that runs under a ten-break ceiling until it completes, so a completed run scores 470
+or better by construction and cannot produce a 469. There is no ladder between the two.
+[docs/TYING-THE-RECORD.md](docs/TYING-THE-RECORD.md) sets out what tying it would actually cost.
 
 ---
 
@@ -116,7 +144,7 @@ server. Press **Back to live** (or the `L` key) to snap to the current board.
 
 ### ⚙ Settings
 
-14 controls covering everything the solver used to decide for itself: how it
+18 controls covering everything the solver used to decide for itself: how it
 picks the next square, how it orders candidate pieces, how hard it looks ahead
 for dead ends, whether and when it restarts, and how long an attempt lasts.
 
@@ -266,6 +294,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the schema.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the parts fit together, the engine protocol, the database schema, the HTTP API |
 | [docs/SOLVER.md](docs/SOLVER.md) | the solver algorithm, why it is built this way, and the benchmark numbers behind the defaults |
 | [docs/TESTING.md](docs/TESTING.md) | what the two test suites cover and how to run them |
+| [docs/TYING-THE-RECORD.md](docs/TYING-THE-RECORD.md) | where this engine stands against the world record, and what tying it would actually cost |
 
 ## 8. Troubleshooting
 

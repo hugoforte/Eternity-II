@@ -18,6 +18,8 @@ java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
 java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
 java -cp java/classes core.ScanSolver 50000000 --quotaSchedule=blackwood
+# the best board this code reaches -- 250/256 pieces, 456/480 edges, ~5 min on one core
+java -cp java/classes core.ScanSolver 8000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
 java -cp java/classes app.Engine --engine=scan --workers=8   # one ScanSolver per worker, best wins
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
@@ -301,12 +303,32 @@ separately, including the one cross-run invariant that does survive: on a small 
 a gated exhaustive run reports is one the ungated run reports too. The gate may lose a solution; it
 can never invent one.
 
-**Our colours are not his colours, and it turns out not to matter.** Our piece table has five border
-colours -- 1, 2, 3, 13 and 14 -- each appearing on exactly 24 sides, which is the 12 frame pairs his
-description quotes; the other seventeen are interior, on 48 or 50 sides each. His `{13, 16, 10}`,
-read as *our* indices, is therefore one border colour and two interior ones -- exactly the shape he
-described, by coincidence of numbering. Every (one border, two interior) triple totals 120 to 124
-sides, and that number is what the measurement below turns out to be about.
+**Our colours are not his colours, and it turns out to be the whole of it.** Our piece table has five
+border colours -- 1, 2, 3, 13 and 14 -- each appearing on exactly 24 sides, which is the 12 frame
+pairs his description quotes; the other seventeen are interior, on 48 or 50 sides each. His table
+numbers its border colours 1, 5, 9, 13 and 17. Both files are transcriptions of the same physical
+puzzle under different labelling conventions, so his three colour numbers are not ours and cannot be
+read as ours.
+
+The relabelling is recoverable, and forced. Refine each colour by the multiset of how often it sits
+cyclically adjacent to, and opposite, every other colour on a piece; on both tables all 23 signature
+classes come out as singletons, so there is exactly one bijection to try. Applying it to his 256
+pieces and canonicalising each under rotation reproduces our piece multiset exactly, which confirms
+both that the two files are the same puzzle and that the mapping is the right one. Under it,
+**his `{13, 16, 10}` is our `{14, 22, 5}`**, and that is what `quotaColours` now defaults to.
+
+The reason the substitution went unnoticed for a whole round of measurement is that it preserves
+every property anyone would check. Reading his numbers as ours gives one border colour and two
+interior ones -- the shape he describes -- and every (one border, two interior) triple carries 120 to
+124 sides, so the totals agree too. What it does not preserve is the property he picked them for, and
+noted in his source: *"there is a lot of overlap between these sides"*. Three pieces carry all three
+of his colours and 22 carry two. **No piece carries all three of the ones read as ours.**
+
+His piece table is worth knowing about for its own sake. `Util.cs` hardcodes all 256 pieces, so a
+record-holder's repository contains a primary-source transcription of the real piece set -- one that
+passes the parity check, where the widely-linked `david3x3x3` copy does not. The full decoding, with
+the two corrections it forces on the research notes, is in
+`~\ai-notes\notes\hugoforte\Eternity-II\blackwood-source-decoded.md`.
 
 ---
 
@@ -508,83 +530,106 @@ reaches about 245 and is never stuck — so there is no tail for a restart to cu
 exposed anyway, because a restart is the only way to re-draw a seed inside a single attempt, and
 because the lab can now settle it with its own data instead of this paragraph.
 
-### The colour quota, measured: a wall, and the arithmetic behind it
+### The colour quota, measured: what the right three colours are worth
 
-`fillOrder=banded`, `slipSchedule=verhaard`, `quotaColours=13,16,10`, single-threaded, equal node
-budgets. Reproduce with `java -cp java/classes core.Bench quota 1000000000`.
+`fillOrder=banded`, `slipSchedule=verhaard`, single-threaded. The off/on pair at any node budget is
+`java -cp java/classes core.Bench quota <nodes>`; a single arm with any colours is
+`java -cp java/classes core.ScanSolver <nodes> --quotaSchedule=blackwood --quotaColours=13,16,10`.
+The 600 s rows were taken by running with the node budget removed and stopping the search at ten
+minutes, which no single command does.
 
 | budget | quota | nodes/sec | pieces placed | matched edges |
 |---|---|---|---|---|
-| 100M | off | 39.0 M | **245 / 256** | **446 / 480** |
-| 100M | on | 43.7 M | 55 / 256 | 90 / 480 |
-| 1B | off | 36.6 M | **247 / 256** | **450 / 480** |
-| 1B | on | 40.5 M | 70 / 256 | 119 / 480 |
-| 10B | off | 37.8 M | **249 / 256** | **454 / 480** |
-| 10B | on | 45.0 M | 73 / 256 | 125 / 480 |
+| 100M | off | 41.2 M | 245 / 256 | 446 / 480 |
+| 100M | `14,22,5` | 31.8 M | **248 / 256** | **452 / 480** |
+| 1B | off | 39.6 M | 247 / 256 | 450 / 480 |
+| 1B | `14,22,5` | 27.6 M | **249 / 256** | **454 / 480** |
+| 10B | off | 39.5 M | 249 / 256 | 454 / 480 |
+| 10B | `14,22,5` | 27.1 M | **250 / 256** | **456 / 480** |
+| 600 s | off | 42.4 M | 249 / 256 | 454 / 480 |
+| 600 s | `14,22,5` | 27.3 M | **250 / 256** | **456 / 480** |
 
-**The gate costs the hot loop nothing when it is off**, which is the one thing that had to be true
-whatever the rest said: 43.9M nodes/sec before the change against 43.0M after, best of three at a
-100M budget with slipping off, reaching the identical board. Switched on it is *faster* per node
-still -- it never gets deep enough for a node to be expensive.
+**The gate is worth a piece and two edges at every budget measured, and it wins on wall-clock as well
+as on nodes.** That second half is not free: the gate costs about a third of the throughput, 27M
+nodes/sec against 40M, because it now reaches depths where a node is expensive. It wins the
+equal-time row anyway, 250/456 against 249/454, on 16.4 billion nodes against 25.4 billion.
 
-**And it is not a small loss, it is a different kind of result.** At every budget the gated search
-stalls somewhere around depth 70 while the same engine without it reaches 245 to 249. Ten times the
-budget buys the gated search three more pieces. That is not a heuristic being outvoted; it is a
-constraint the search cannot satisfy.
+**The 10B row is the one that matters.** 250 pieces / 456 matched edges is the best board this
+project has recorded. It was found by the overnight eight-arm run -- eight cores for six hours,
+5.2e12 nodes, about 48 core-hours. The gated engine reaches the same board on **one core in six
+minutes**, for 1.0e10 nodes. That is the same board for roughly **500 times less work**, and it is
+the whole of what this technique was worth.
 
-The reason is arithmetic, and it needs no search at all. The piece set holds 122 sides of
-{13, 16, 10}: 154 pieces carry none of the three, 82 carry one, 20 carry two, and none carries three.
-So the most that **any** *d* pieces could possibly carry is the sum of the *d* largest counts -- and
-that bound sits a handful of sides above the ramp for the whole of its length:
+**The gate still costs the hot loop nothing when it is off**, which was the thing that had to stay
+true: the index comes out with exactly the 793 entries it always had, and `descend` is the loop it
+always was plus one branch.
 
-| by placement | the ramp asks for | the most any pieces could hold | the ungated best board reaches |
-|---|---|---|---|
-| 16 | 0 | 32 | 1 |
-| 32 | 36 | 52 | 8 |
-| 64 | 78 | 84 | 19 |
-| 96 | 102 | 116 | 33 |
-| 128 | 111 | 122 | 43 |
-| 160 | 119 | 122 | 62 |
+#### Why the first attempt measured a wall instead
 
-The tightest point leaves **2 sides of slack**. Spelled out, the ramp says that of the first 56
-placements at least 51 must carry one of the three colours, including all 20 of the pieces that carry
-two -- before edge matching has had any say at all. The last column is the other half of the story:
-the engine's own unconstrained descent, the one that reaches 249/454, has consumed 62 of those sides
-by placement 160 against a demand of 119. The ramp is asking for nearly twice what this engine's best
-board delivers.
+The first round of measurement ran `quotaColours=13,16,10` -- Blackwood's three numbers read as
+indices into *our* piece table rather than his. The engine stalled around depth 70 at every budget,
+and the conclusion drawn was that the ramp is unsatisfiable. It is not. Those were three different
+colours. Section 7 above has the relabelling and how it was recovered; this is what it cost:
+
+| budget | `14,22,5` (his three) | `13,16,10` (his numbers read as ours) |
+|---|---|---|
+| 100M | **248 / 452** | 55 / 90 |
+| 1B | **249 / 454** | 70 / 119 |
+| 10B | **250 / 456** | 73 / 125 |
+
+The arithmetic behind the stall holds up, and is worth keeping, because it says something about the
+ramp that is true for both triples. The ramp asks for 119 of the 122 available sides by placement
+160. No search can beat the bound set by the pieces that exist and the cells the fill order has
+actually reached by that depth -- 2 corner cells, 32 edge cells and 126 interior cells at 160 -- so
+that bound is the honest ceiling:
+
+| by placement | the ramp asks for | ceiling, his three | slack | ceiling, ours read as his | slack |
+|---|---|---|---|---|---|
+| 32 | 36 | 54 | 18 | 51 | 15 |
+| 56 | 70 | 82 | **12** | 75 | **5** |
+| 64 | 78 | 90 | **12** | 83 | **5** |
+| 76 | 89 | 102 | **13** | 95 | **6** |
+| 128 | 111 | 122 | 11 | 122 | 11 |
+| 160 | 119 | 122 | 3 | 122 | 3 |
+
+**Both triples are three sides clear of impossible at 160, so that depth is not what separates them.**
+The difference is the band from 56 to 76, where his three leave 12 to 13 sides of room and the
+substitutes leave 5 to 6. The stall was measured at depth 70 to 73 -- the middle of that band.
 
 **Which three colours, measured.** `core.Bench colours` ranks all 680 (one border, two interior)
-triples by that worst-case slack -- the cheap substitute for the 1,360 hundred-minute runs the source
-material spent on the same question -- and then runs the extremes at an equal budget. 1B nodes each:
+triples by the least room the ramp ever leaves them, then runs the extremes of that ranking. 1B nodes
+each:
 
-| colours | total sides | worst slack | pieces placed | matched edges |
-|---|---|---|---|---|
-| `13,9,12` | 124 | 4 | **159 / 256** | **292 / 480** |
-| `3,9,12` | 124 | 4 | 122 / 256 | 220 / 480 |
-| `2,9,12` | 124 | 4 | 91 / 256 | 160 / 480 |
-| `13,16,10` (Blackwood's numbers) | 122 | 2 | 70 / 256 | 119 / 480 |
-| `2,19,21` | 124 | −4 | 46 / 256 | 73 / 480 |
+| colours | worst slack | pieces placed | matched edges |
+|---|---|---|---|
+| `1,7,8` | 5 | 246 / 256 | 448 / 480 |
+| `1,7,9` | 5 | 58 / 256 | 96 / 480 |
+| `1,7,10` | 5 | **249 / 256** | **454 / 480** |
+| `14,22,5` (Blackwood's own, ranked 403rd) | 3 | **249 / 256** | **454 / 480** |
+| `2,19,21` (worst in the table) | −4 | 46 / 256 | 73 / 480 |
 
-**The best slack available anywhere in the table is 4 sides, and plenty of triples are negative** --
-for those the ramp is not merely hard, it is unsatisfiable by any arrangement of pieces whatsoever.
-The ranking is worth having: the negative triple is the worst performer and the 4-slack triples all
-beat Blackwood's 2-slack one. But it is necessary and nowhere near sufficient, because `13,9,12` and
-`2,9,12` have identical slack and land 68 pieces apart. The best triple found, at the budget where
-the ungated engine reaches 247/450, reaches 159/292.
+**Slack rules things out and predicts nothing.** Twenty-three triples are negative, and for those the
+ramp is unsatisfiable by any arrangement of pieces whatsoever -- that part of the ranking is sound and
+worth keeping. Above that line it stops carrying information: three triples with *identical* slack of
+5 land at 58, 246 and 249 pieces.
 
-**What this refutes, and what it does not.** It refutes the ramp on this engine, decisively and for
-every colour triple the piece set allows. It does not refute colour-quota gating as an idea, because
-the measurement above also says why the ramp cannot be read the way it was transcribed: a demand of
-119 out of 122 by placement 160 is within two sides of impossible for **any** engine using these
-pieces, Blackwood's included. Something in the transcription does not transfer, and the most likely
-candidate is the depth axis. A frame-first order has all 24 sides of the border colour down by
-placement 60; our banded order is 10 rows deep at placement 160 and has only 34 of the 60 frame cells
-filled, none of them chosen for their colour. The ramp and the fill order it was tuned on are not
-separable, and we copied one without the other.
+**And Blackwood's three are not uniquely good.** `1,7,10`, picked by the ranking rather than from his
+source, matches them exactly at 249/454. That is worth knowing rather than disappointing: it is the
+same thing Bucas reports from the other end, that the two boards which reached 470 used *different*
+heuristic triples. The triple is a parameter to vary, not a secret to recover.
 
-So the gate stays built, off by default, and exposed to the tuner, because it is cheap to carry and
-the lab can now settle it with data instead of this paragraph. The technique's remaining value here
-is a question about fill order, not about colours -- and that is a different piece of work.
+What reading the source did settle is the ramp itself. It is satisfiable, the previous round's
+"unsatisfiable by any triple" conclusion was an artefact of three wrong colours, and the gate is worth
+a piece and two edges once it is pointed at colours it can be satisfied by.
+
+**The gate stays off by default**, and that has not changed. It abandons subtrees that may hold
+solutions, so the default engine stays complete and `CrossValidationTest` keeps exercising it.
+`ColourQuotaTest` covers the gate separately. Turn it on for a score-chasing run; leave it off when
+the answer has to be exhaustive.
+
+**What is still not done.** The ramp's five slopes have not been tuned on this engine, only copied.
+The other 678 triples have not been run. Both are cheap, and the ranking machinery for them already
+exists.
 
 ### Fill orders, measured without running a search
 
