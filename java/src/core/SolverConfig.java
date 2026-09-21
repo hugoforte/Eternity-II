@@ -35,6 +35,13 @@ public final class SolverConfig {
     /** Verhaard's ceiling: starts sooner at 193 and rises to 12 by depth 240. */
     public static final int SLIP_VERHAARD  = 2;
 
+    // ----------------------------------------------------------- colour quota
+
+    /** No quota: the tracked colours may be spent whenever the search likes. */
+    public static final int QUOTA_NONE      = 0;
+    /** Blackwood's published ramp: a floor on colours consumed, by depth. */
+    public static final int QUOTA_BLACKWOOD = 1;
+
     // ---------------------------------------------------------- cell ordering
 
     /** Always take the empty cell with the fewest candidates. */
@@ -87,6 +94,10 @@ public final class SolverConfig {
     public int     fillOrder           = FILL_BANDED;
     /** How many mismatched edges {@link ScanSolver} may leave, by depth. */
     public int     slipSchedule        = SLIP_NONE;
+    /** How many sides of {@link #quotaColours} must be spent by each depth. */
+    public int     quotaSchedule       = QUOTA_NONE;
+    /** The colours the quota counts: one border colour and two interior ones. */
+    public String  quotaColours        = "13,16,10";
     public int     cellOrder           = CELL_MRV;
     /** Hybrid switches to lowest-index once the MRV minimum exceeds this. */
     public int     hybridThreshold     = 4;
@@ -116,6 +127,8 @@ public final class SolverConfig {
         c.engine = engine;
         c.fillOrder = fillOrder;
         c.slipSchedule = slipSchedule;
+        c.quotaSchedule = quotaSchedule;
+        c.quotaColours = quotaColours;
         c.cellOrder = cellOrder;
         c.hybridThreshold = hybridThreshold;
         c.tieBreak = tieBreak;
@@ -207,6 +220,39 @@ public final class SolverConfig {
         if (v == SLIP_BLACKWOOD) return "blackwood";
         if (v == SLIP_VERHAARD) return "verhaard";
         return "none";
+    }
+
+    public static int parseQuotaSchedule(String s) {
+        if (s == null) return QUOTA_NONE;
+        if (s.equals("blackwood")) return QUOTA_BLACKWOOD;
+        return QUOTA_NONE;
+    }
+    public static String quotaScheduleName(int v) {
+        if (v == QUOTA_BLACKWOOD) return "blackwood";
+        return "none";
+    }
+
+    /**
+     * Read a comma-separated colour list, or return null when it is not one.
+     *
+     * The caller keeps its previous value on null rather than guessing, and
+     * {@link ScanSolver} is what decides whether the colours make sense for
+     * the instance it was handed -- this only decides whether the string is a
+     * list of distinct non-negative numbers at all.
+     */
+    public static int[] parseColourList(String s) {
+        if (s == null) return null;
+        String[] parts = s.trim().split(",");
+        if (parts.length == 0) return null;
+        int[] out = new int[parts.length];
+        for (int i = 0; i < parts.length; i++) {
+            try {
+                out[i] = Integer.parseInt(parts[i].trim());
+            } catch (Throwable e) { return null; }
+            if (out[i] < 0) return null;
+            for (int j = 0; j < i; j++) if (out[j] == out[i]) return null;
+        }
+        return out;
     }
 
     public static int parseCellOrder(String s) {
@@ -302,6 +348,8 @@ public final class SolverConfig {
         sb.append("\"engine\":\"").append(engineName(engine)).append("\",");
         sb.append("\"fillOrder\":\"").append(fillOrderName(fillOrder)).append("\",");
         sb.append("\"slipSchedule\":\"").append(slipScheduleName(slipSchedule)).append("\",");
+        sb.append("\"quotaSchedule\":\"").append(quotaScheduleName(quotaSchedule)).append("\",");
+        sb.append("\"quotaColours\":\"").append(quotaColours).append("\",");
         sb.append("\"cellOrder\":\"").append(cellOrderName(cellOrder)).append("\",");
         sb.append("\"hybridThreshold\":").append(hybridThreshold).append(',');
         sb.append("\"tieBreak\":\"").append(tieBreakName(tieBreak)).append("\",");
@@ -339,6 +387,8 @@ public final class SolverConfig {
         if (k.equals("engine")) engine = parseEngine(v);
         else if (k.equals("fillOrder")) fillOrder = parseFillOrder(v);
         else if (k.equals("slipSchedule")) slipSchedule = parseSlipSchedule(v);
+        else if (k.equals("quotaSchedule")) quotaSchedule = parseQuotaSchedule(v);
+        else if (k.equals("quotaColours")) quotaColours = (parseColourList(v) == null) ? quotaColours : v.trim();
         else if (k.equals("cellOrder")) cellOrder = parseCellOrder(v);
         else if (k.equals("hybridThreshold")) hybridThreshold = clampInt(v, 1, 4096, hybridThreshold);
         else if (k.equals("tieBreak")) tieBreak = parseTieBreak(v);

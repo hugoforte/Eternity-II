@@ -105,6 +105,29 @@ package core;
  * about it: a board completed with breaks is recorded as the best seen and the
  * search carries on.  Only a board with no breaks is reported as a solution.
  *
+ * ------------------------------------------------------------ colour quota
+ *
+ * Slipping decides how much mismatch the tail may carry; the colour quota
+ * decides what the tail is allowed to be made of.  Three colours are tracked --
+ * {@code quotaColours}, one border colour and two interior ones -- and
+ * {@code quotaSchedule} gives a floor, by depth, on how many sides of them the
+ * board must already have consumed.  A candidate that cannot lift the board to
+ * its depth's floor does not merely lose its turn: the whole run is abandoned,
+ * which is what makes this a pruning rule rather than an ordering tweak.
+ *
+ * That is only sound because the candidates carrying the tracked colours come
+ * first.  A variant's count is fixed by its piece, so the index is built in
+ * descending-count order -- one group of (word, mask) pairs per count, highest
+ * first -- and {@link #quotaCount} records the count of each entry.  The first
+ * entry that falls short means every entry behind it does too.  With no quota
+ * there is a single group holding everything, so the index is laid out exactly
+ * as it was before the gate existed and {@link #descend} is the loop it always
+ * was.
+ *
+ * The gate is DELIBERATELY INCOMPLETE: it abandons subtrees that may hold
+ * solutions, so it is off by default and is kept out of every test that
+ * compares solution sets.
+ *
  * ------------------------------------------------- seeded candidate order
  *
  * Everything above is fixed by the instance, so without help this engine runs
@@ -151,9 +174,10 @@ package core;
  * ------------------------------------------------------------------- config
  *
  * This engine reads {@code fillOrder}, {@code slipSchedule},
- * {@code greyInteriorPruning}, {@code nodeBudget}, {@code valueOrder},
- * {@code shuffleStrength}, {@code randomSeed} and the three {@code restart*}
- * settings from its {@link SolverConfig}.  It has no cell heuristic, so the
+ * {@code quotaSchedule}, {@code quotaColours}, {@code greyInteriorPruning},
+ * {@code nodeBudget}, {@code valueOrder}, {@code shuffleStrength},
+ * {@code randomSeed} and the three {@code restart*} settings from its
+ * {@link SolverConfig}.  It has no cell heuristic, so the
  * remaining settings belong to {@link MrvSolver}.  {@code valueOrder} has no
  * rarest-colour analogue here -- a key's candidates all carry the same two
  * known colours -- so that value orders the same way {@code natural} does.
@@ -186,6 +210,26 @@ public final class ScanSolver implements Search {
      */
     private static final int[] SCHEDULE_VERHAARD =
         { 193, 202, 209, 214, 218, 222, 226, 229, 232, 235, 238, 240 };
+
+    /**
+     * Blackwood's published colour-quota ramp, as the breakpoints of a
+     * piecewise-linear floor: by placement {@link #QUOTA_DEPTHS}[k] the board
+     * must have consumed at least {@link #QUOTA_SIDES}[k] sides of the tracked
+     * colours.  Interpolating between them reproduces his quoted slopes
+     * exactly -- 2.8 a placement from 17 to 26, then 1.43333, 0.9, 0.6538 and
+     * finally 1/4.4615 out to 160, after which he stops constraining.  A
+     * randomised sweep found the hand-tuned curve near-optimal, so the numbers
+     * are data and not a tuning surface.
+     *
+     * Between breakpoints the ramp is fractional and the count it is compared
+     * against is an integer, so a demand of 2.8 sides is either "at least 2" or
+     * "at least 3" depending on whether the published array held the truncated
+     * value or the real one.  The looser reading is taken -- the floor is
+     * truncated -- so that nothing measured here can be blamed on a gate made
+     * stricter than the one published.
+     */
+    private static final int[] QUOTA_DEPTHS = { 16, 26, 56, 76, 102, 160 };
+    private static final int[] QUOTA_SIDES  = {  0, 28, 71, 89, 106, 119 };
 
     /** The board the published schedules are quoted for. */
     private static final int SCHEDULE_CELLS = 256;
@@ -235,6 +279,14 @@ public final class ScanSolver implements Search {
 
     /** Depth -> the most broken edges the board may carry by then. */
     private final int[] breakCeiling;
+    /** Depth -> the fewest quota-colour sides the board must have consumed. */
+    private final int[] quotaFloor;
+    /** Index entry -> how many quota-colour sides its candidates carry. */
+    private final int[] quotaCount;
+    /** The colours the quota tracks, empty when it is off. */
+    private final int[] quotaColour;
+    /** Whether the configured schedule gates this board at all. */
+    private final boolean quota;
     /** Depth -> internal edges joined up by the first {@code depth} placements. */
     private final int[] checksBefore;
     /** Whether the configured schedule lets this board slip at all. */
@@ -254,6 +306,8 @@ public final class ScanSolver implements Search {
     private final long[] avail;
     /** Depth -> the variant placed there; index cells holds the off-board sentinel. */
     private final int[] chosen;
+    /** Depth -> quota-colour sides consumed by the pieces placed before it. */
+    private final int[] quotaCumulative;
 
     private long sampleCountdown;
     private long startNanos;
@@ -385,6 +439,38 @@ public final class ScanSolver implements Search {
         }
         this.numClasses = numClasses;
 
+        // --- the quota's colours, and one candidate group per side count -----
+        // The gate abandons a run at the first entry that cannot meet the
+        // floor, so the entries have to arrive highest-count first.  A
+        // variant's count is fixed by its piece, so grouping the index by count
+        // at construction is all the ordering the search needs.  With the gate
+        // off there is one group holding every variant, which lays the index
+        // out exactly as it was before.
+        this.quotaFloor = quotaFloors(cfg.quotaSchedule, cells);
+        this.quota = quotaFloor[cells] > 0;
+        this.quotaColour = quota ? checkedQuotaColours(cfg.quotaColours) : new int[0];
+        long[][] groups;
+        int[] groupCount;
+        if (quota) {
+            boolean[] counted = new boolean[numColours];
+            for (int i = 0; i < quotaColour.length; i++) counted[quotaColour[i]] = true;
+            groups = new long[5][words];
+            groupCount = new int[] { 4, 3, 2, 1, 0 };
+            for (int v = 0; v < numVariants; v++) {
+                int p = variantSides[v];
+                int c = 0;
+                if (counted[Sides.left(p)]) c++;
+                if (counted[Sides.top(p)]) c++;
+                if (counted[Sides.right(p)]) c++;
+                if (counted[Sides.bottom(p)]) c++;
+                groups[4 - c][v >>> 6] |= 1L << (v & 63);
+            }
+        } else {
+            groups = new long[1][words];
+            groupCount = new int[] { 0 };
+            for (int w = 0; w < words; w++) groups[0][w] = -1L;
+        }
+
         // --- candidate tables ------------------------------------------------
         int pairs = numColours * numColours;
         int buckets = numClasses * pairs;
@@ -465,20 +551,21 @@ public final class ScanSolver implements Search {
         int entries = 0;
         for (int b = 0; b < buckets; b++) {
             keyStart[b] = entries;
-            entries += liveWords(bits, b, words);
+            entries += liveWords(bits, b, words, groups);
             keyPerfectEnd[b] = entries;
-            entries += liveWords(leftBits, b, words);
+            entries += liveWords(leftBits, b, words, groups);
             keyLeftBreakEnd[b] = entries;
-            entries += liveWords(topBits, b, words);
+            entries += liveWords(topBits, b, words, groups);
         }
         keyStart[buckets] = entries;
         this.keyWord = new int[entries];
         this.keyMask = new long[entries];
+        this.quotaCount = quota ? new int[entries] : null;
         int at = 0;
         for (int b = 0; b < buckets; b++) {
-            at = appendRun(bits, b, words, at);
-            at = appendRun(leftBits, b, words, at);
-            at = appendRun(topBits, b, words, at);
+            at = appendRun(bits, b, words, groups, groupCount, at);
+            at = appendRun(leftBits, b, words, groups, groupCount, at);
+            at = appendRun(topBits, b, words, groups, groupCount, at);
         }
 
         // Reordering the runs is destructive, so the natural order is kept to
@@ -522,24 +609,37 @@ public final class ScanSolver implements Search {
 
         this.avail = new long[words];
         this.chosen = new int[cells + 1];
+        this.quotaCumulative = quota ? new int[cells + 1] : null;
         reset();
     }
 
-    /** How many words of one bucket hold any candidate at all. */
-    private static int liveWords(long[] bits, int bucket, int words) {
+    /** How many (group, word) pairs of one bucket hold any candidate at all. */
+    private static int liveWords(long[] bits, int bucket, int words, long[][] groups) {
         int count = 0;
-        for (int w = 0; w < words; w++) if (bits[bucket * words + w] != 0L) count++;
+        for (int g = 0; g < groups.length; g++) {
+            for (int w = 0; w < words; w++) {
+                if ((bits[bucket * words + w] & groups[g][w]) != 0L) count++;
+            }
+        }
         return count;
     }
 
-    /** Copy one bucket's live (word, mask) pairs into the index. */
-    private int appendRun(long[] bits, int bucket, int words, int at) {
-        for (int w = 0; w < words; w++) {
-            long m = bits[bucket * words + w];
-            if (m == 0L) continue;
-            keyWord[at] = w;
-            keyMask[at] = m;
-            at++;
+    /**
+     * Copy one bucket's live (word, mask) pairs into the index, group by group.
+     * The groups arrive in the order the search will read them, so a bucket's
+     * entries come out sorted by quota-colour count, highest first.
+     */
+    private int appendRun(long[] bits, int bucket, int words, long[][] groups,
+                          int[] groupCount, int at) {
+        for (int g = 0; g < groups.length; g++) {
+            for (int w = 0; w < words; w++) {
+                long m = bits[bucket * words + w] & groups[g][w];
+                if (m == 0L) continue;
+                keyWord[at] = w;
+                keyMask[at] = m;
+                if (quotaCount != null) quotaCount[at] = groupCount[g];
+                at++;
+            }
         }
         return at;
     }
@@ -563,6 +663,66 @@ public final class ScanSolver implements Search {
             for (int d = depth; d <= cells; d++) out[d] = i + 1;
         }
         return out;
+    }
+
+    /**
+     * Depth -> the fewest quota-colour sides the board must have consumed by
+     * then, which is Blackwood's ramp read off {@link #QUOTA_DEPTHS} and
+     * {@link #QUOTA_SIDES}.  Both axes are scaled by {@code cells / 256} the
+     * way the slip schedules and {@link FillOrder}'s phases are: the real
+     * puzzle gets the published curve verbatim and every other board size gets
+     * the same shape.  Past the last breakpoint the floor simply holds, which
+     * constrains nothing -- the count only ever grows, so a board that met the
+     * floor at 160 meets it at every depth after.
+     */
+    private static int[] quotaFloors(int quotaSchedule, int cells) {
+        int[] out = new int[cells + 1];
+        if (quotaSchedule != SolverConfig.QUOTA_BLACKWOOD) return out;
+        for (int d = 1; d <= cells; d++) {
+            int i = (int) ((long) d * SCHEDULE_CELLS / cells);
+            out[d] = (int) ((long) quotaRamp(i) * cells / SCHEDULE_CELLS);
+        }
+        return out;
+    }
+
+    /** The ramp at one placement of a 256-cell board, linear between breakpoints. */
+    private static int quotaRamp(int placement) {
+        if (placement <= QUOTA_DEPTHS[0]) return 0;
+        for (int k = 1; k < QUOTA_DEPTHS.length; k++) {
+            if (placement <= QUOTA_DEPTHS[k]) {
+                int run = QUOTA_DEPTHS[k] - QUOTA_DEPTHS[k - 1];
+                int rise = QUOTA_SIDES[k] - QUOTA_SIDES[k - 1];
+                return QUOTA_SIDES[k - 1] + (placement - QUOTA_DEPTHS[k - 1]) * rise / run;
+            }
+        }
+        return QUOTA_SIDES[QUOTA_SIDES.length - 1];
+    }
+
+    /**
+     * The colours the quota tracks, refusing anything this instance could not
+     * count.  Grey is rejected outright: it is the border colour, every border
+     * piece carries it and no interior side may, so a quota on it would say
+     * nothing about what is left for the tail.
+     */
+    private int[] checkedQuotaColours(String spec) {
+        int[] colours = SolverConfig.parseColourList(spec);
+        if (colours == null || colours.length == 0) {
+            throw new IllegalStateException(
+                "quotaColours is not a list of distinct colour numbers: [" + spec + "]");
+        }
+        for (int i = 0; i < colours.length; i++) {
+            if (colours[i] == GREY) {
+                throw new IllegalStateException("quotaColours may not include grey ("
+                    + GREY + "): it is the border colour, so every border piece carries"
+                    + " it and no interior side may -- got [" + spec + "]");
+            }
+            if (colours[i] >= numColours) {
+                throw new IllegalStateException("quotaColours names colour " + colours[i]
+                    + ", but this instance only has colours 0.." + (numColours - 1)
+                    + " -- got [" + spec + "]");
+            }
+        }
+        return colours;
     }
 
     private static int[] scheduleFor(int slipSchedule) {
@@ -708,13 +868,34 @@ public final class ScanSolver implements Search {
      * were.
      */
     private void orderRun(int from, int to) {
+        if (to - from < 2) return;
+        boolean scramble = cfg.valueOrder == SolverConfig.VALUE_RANDOM
+                        || (cfg.shuffleStrength > 0 && nextInt(100) < cfg.shuffleStrength);
+        if (quotaCount == null) {
+            permute(from, to, scramble);
+            return;
+        }
+        // Under the quota the run is read highest-count first and abandoned at
+        // the first entry that falls short, so moving an entry across counts
+        // would throw away candidates that could still have met the floor.
+        // Each stretch of equal count is permuted on its own instead -- which
+        // is also why the counts themselves never have to move.
+        int start = from;
+        while (start < to) {
+            int end = start + 1;
+            while (end < to && quotaCount[end] == quotaCount[start]) end++;
+            permute(start, end, scramble);
+            start = end;
+        }
+    }
+
+    /** Reverse and/or shuffle one stretch of entries in place. */
+    private void permute(int from, int to, boolean scramble) {
         int len = to - from;
         if (len < 2) return;
         if (cfg.valueOrder == SolverConfig.VALUE_REVERSE) {
             for (int i = 0; i < len / 2; i++) swapEntries(from + i, to - 1 - i);
         }
-        boolean scramble = cfg.valueOrder == SolverConfig.VALUE_RANDOM
-                        || (cfg.shuffleStrength > 0 && nextInt(100) < cfg.shuffleStrength);
         if (!scramble) return;
         for (int i = len - 1; i > 0; i--) swapEntries(from + i, from + nextInt(i + 1));
     }
@@ -882,6 +1063,7 @@ public final class ScanSolver implements Search {
      * @return true when the caller should stop descending.
      */
     private boolean descend(int depth, int breaks, int from, int to) {
+        if (quota) return descendQuota(depth, breaks, from, to);
         for (int i = from; i < to; i++) {
             int w = keyWord[i];
             long live = avail[w];
@@ -891,6 +1073,43 @@ public final class ScanSolver implements Search {
                 bits &= bits - 1L;
                 chosen[depth] = v;
                 // One AND clears all four rotations of the piece at once.
+                avail[w] = live & ~(0xFL << (v & 0x3C));
+                boolean stop = dfs(depth + 1, breaks);
+                avail[w] = live;
+                if (stop) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The same scan under the colour quota.
+     *
+     * Entries arrive highest-count first, so the first one that cannot lift the
+     * board to this depth's floor means none of the ones behind it can either,
+     * and the run is ABANDONED rather than filtered.  That is the whole of the
+     * technique: rejecting the candidate alone would only reorder the search,
+     * whereas cutting the run off removes the subtree.
+     *
+     * Every candidate in one entry shares its count, so the running total for
+     * the next depth is written once per entry rather than once per placement.
+     *
+     * @return true when the caller should stop descending.
+     */
+    private boolean descendQuota(int depth, int breaks, int from, int to) {
+        int carried = quotaCumulative[depth];
+        int need = quotaFloor[depth + 1] - carried;
+        for (int i = from; i < to; i++) {
+            int have = quotaCount[i];
+            if (have < need) return false;
+            quotaCumulative[depth + 1] = carried + have;
+            int w = keyWord[i];
+            long live = avail[w];
+            long bits = keyMask[i] & live;
+            while (bits != 0L) {
+                int v = (w << 6) + Long.numberOfTrailingZeros(bits);
+                bits &= bits - 1L;
+                chosen[depth] = v;
                 avail[w] = live & ~(0xFL << (v & 0x3C));
                 boolean stop = dfs(depth + 1, breaks);
                 avail[w] = live;
@@ -997,6 +1216,23 @@ public final class ScanSolver implements Search {
 
     /** Whether the configured schedule lets this board slip at all. */
     public boolean slipping() { return slipping; }
+
+    /** Whether the configured schedule gates this board on colour at all. */
+    public boolean quotaGated() { return quota; }
+
+    /** Depth -> the fewest quota-colour sides the board must have consumed. */
+    public int[] quotaFloors() {
+        int[] out = new int[quotaFloor.length];
+        System.arraycopy(quotaFloor, 0, out, 0, quotaFloor.length);
+        return out;
+    }
+
+    /** The colours the quota tracks; empty when it is off. */
+    public int[] quotaColours() {
+        int[] out = new int[quotaColour.length];
+        System.arraycopy(quotaColour, 0, out, 0, quotaColour.length);
+        return out;
+    }
 
     /** Depth -> the most broken edges the board may carry by then. */
     public int[] breakCeilings() {

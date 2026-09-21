@@ -17,12 +17,15 @@ java -cp java/classes core.MrvSolver 50000000 # stop after 50M steps
 java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
 java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
+java -cp java/classes core.ScanSolver 50000000 --quotaSchedule=blackwood
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
 java -cp java/classes core.Bench engines 20   # the two engines, 20s each
 java -cp java/classes core.Bench slip         # edge slipping off vs on, equal nodes
 java -cp java/classes core.Bench order        # fill-order frontiers, no search
 java -cp java/classes core.Bench seeds 20 100000000   # 20 seeds at one budget
+java -cp java/classes core.Bench quota         # the colour quota off vs on, equal nodes
+java -cp java/classes core.Bench colours      # which three colours the quota tracks
 java -cp java/classes core.AllTests           # the test suite
 java -cp java/classes app.Engine --nodeBudget=300000   # the JSONL engine, by hand
 ```
@@ -247,6 +250,62 @@ be discovered. Without randomness there is nothing to re-draw, so `restartPolicy
 and `restarts()` stays 0. And an exhaustive enumeration never restarts, because after a restart the
 search has no record of the solutions it already reported and would count them twice.
 
+### 7. A colour quota
+
+Blackwood's engine picks **three colours** -- one border colour and two interior ones -- and uses
+them as a progress gate. The pieces carrying them go to the front of every candidate list; a running
+count says how many sides of those colours the placed pieces have consumed; and at each depth that
+count is compared against a published floor. If the best remaining candidate cannot lift the board to
+that depth's floor, the search **abandons the scan at that depth** rather than merely rejecting the
+candidate. That last part is what makes it a pruning rule instead of an ordering tweak, and it is the
+largest technique in the source material -- measured there at ~2x on top of everything else he had.
+
+`quotaSchedule=blackwood` is his ramp, stored as the breakpoints of a piecewise-linear floor on a
+256-cell board:
+
+| by placement | sides of the three colours consumed |
+|---|---|
+| 16 | 0 |
+| 26 | 28 |
+| 56 | 71 |
+| 76 | 89 |
+| 102 | 106 |
+| 160 | 119 |
+
+Interpolating between them reproduces his quoted slopes exactly -- 2.8 a placement out to 26, then
+1.43333, 0.9, 0.6538 and finally 1/4.4615 out to 160, after which he constrains nothing. Between
+breakpoints the floor is fractional and the count it is compared against is an integer, so a demand
+of 2.8 sides is either "at least 2" or "at least 3" depending on what his array held; **the looser
+reading is taken**, so nothing measured below can be blamed on a gate made stricter than the
+published one. Both axes scale by `cells / 256` exactly as the slip schedules and the fill-order
+phases do.
+
+**"Sorted to the front" is table data here, not a sort.** A variant's count is fixed by its piece, so
+the candidate index is simply built in descending-count order: one group of (word, mask) pairs per
+count, highest first, with a parallel `quotaCount` entry saying which. The first entry that falls
+short means every entry behind it does too, so a run is cut off with one compare per entry and no
+colour arithmetic in the loop. With the gate off there is a single group holding every variant, so
+the index comes out with exactly the 793 entries it always had; on, it needs 881. `descend` is the
+loop it always was, plus one branch on a final field.
+
+**The seed still works, and still cannot break the gate.** A key's run is permuted within each
+stretch of equal count rather than across the whole run, because moving an entry across counts would
+abandon candidates that could still have met the floor -- which is also why the counts themselves
+never have to move.
+
+**The gate is deliberately incomplete.** It abandons subtrees that may contain solutions, so it is
+off by default and `CrossValidationTest` does not know it exists. `ColourQuotaTest` covers it
+separately, including the one cross-run invariant that does survive: on a small instance, every board
+a gated exhaustive run reports is one the ungated run reports too. The gate may lose a solution; it
+can never invent one.
+
+**Our colours are not his colours, and it turns out not to matter.** Our piece table has five border
+colours -- 1, 2, 3, 13 and 14 -- each appearing on exactly 24 sides, which is the 12 frame pairs his
+description quotes; the other seventeen are interior, on 48 or 50 sides each. His `{13, 16, 10}`,
+read as *our* indices, is therefore one border colour and two interior ones -- exactly the shape he
+described, by coincidence of numbering. Every (one border, two interior) triple totals 120 to 124
+sides, and that number is what the measurement below turns out to be about.
+
 ---
 
 ## Measured results
@@ -406,6 +465,84 @@ reaches about 245 and is never stuck — so there is no tail for a restart to cu
 exposed anyway, because a restart is the only way to re-draw a seed inside a single attempt, and
 because the lab can now settle it with its own data instead of this paragraph.
 
+### The colour quota, measured: a wall, and the arithmetic behind it
+
+`fillOrder=banded`, `slipSchedule=verhaard`, `quotaColours=13,16,10`, single-threaded, equal node
+budgets. Reproduce with `java -cp java/classes core.Bench quota 1000000000`.
+
+| budget | quota | nodes/sec | pieces placed | matched edges |
+|---|---|---|---|---|
+| 100M | off | 39.0 M | **245 / 256** | **446 / 480** |
+| 100M | on | 43.7 M | 55 / 256 | 90 / 480 |
+| 1B | off | 36.6 M | **247 / 256** | **450 / 480** |
+| 1B | on | 40.5 M | 70 / 256 | 119 / 480 |
+| 10B | off | 37.8 M | **249 / 256** | **454 / 480** |
+| 10B | on | 45.0 M | 73 / 256 | 125 / 480 |
+
+**The gate costs the hot loop nothing when it is off**, which is the one thing that had to be true
+whatever the rest said: 43.9M nodes/sec before the change against 43.0M after, best of three at a
+100M budget with slipping off, reaching the identical board. Switched on it is *faster* per node
+still -- it never gets deep enough for a node to be expensive.
+
+**And it is not a small loss, it is a different kind of result.** At every budget the gated search
+stalls somewhere around depth 70 while the same engine without it reaches 245 to 249. Ten times the
+budget buys the gated search three more pieces. That is not a heuristic being outvoted; it is a
+constraint the search cannot satisfy.
+
+The reason is arithmetic, and it needs no search at all. The piece set holds 122 sides of
+{13, 16, 10}: 154 pieces carry none of the three, 82 carry one, 20 carry two, and none carries three.
+So the most that **any** *d* pieces could possibly carry is the sum of the *d* largest counts -- and
+that bound sits a handful of sides above the ramp for the whole of its length:
+
+| by placement | the ramp asks for | the most any pieces could hold | the ungated best board reaches |
+|---|---|---|---|
+| 16 | 0 | 32 | 1 |
+| 32 | 36 | 52 | 8 |
+| 64 | 78 | 84 | 19 |
+| 96 | 102 | 116 | 33 |
+| 128 | 111 | 122 | 43 |
+| 160 | 119 | 122 | 62 |
+
+The tightest point leaves **2 sides of slack**. Spelled out, the ramp says that of the first 56
+placements at least 51 must carry one of the three colours, including all 20 of the pieces that carry
+two -- before edge matching has had any say at all. The last column is the other half of the story:
+the engine's own unconstrained descent, the one that reaches 249/454, has consumed 62 of those sides
+by placement 160 against a demand of 119. The ramp is asking for nearly twice what this engine's best
+board delivers.
+
+**Which three colours, measured.** `core.Bench colours` ranks all 680 (one border, two interior)
+triples by that worst-case slack -- the cheap substitute for the 1,360 hundred-minute runs the source
+material spent on the same question -- and then runs the extremes at an equal budget. 1B nodes each:
+
+| colours | total sides | worst slack | pieces placed | matched edges |
+|---|---|---|---|---|
+| `13,9,12` | 124 | 4 | **159 / 256** | **292 / 480** |
+| `3,9,12` | 124 | 4 | 122 / 256 | 220 / 480 |
+| `2,9,12` | 124 | 4 | 91 / 256 | 160 / 480 |
+| `13,16,10` (Blackwood's numbers) | 122 | 2 | 70 / 256 | 119 / 480 |
+| `2,19,21` | 124 | −4 | 46 / 256 | 73 / 480 |
+
+**The best slack available anywhere in the table is 4 sides, and plenty of triples are negative** --
+for those the ramp is not merely hard, it is unsatisfiable by any arrangement of pieces whatsoever.
+The ranking is worth having: the negative triple is the worst performer and the 4-slack triples all
+beat Blackwood's 2-slack one. But it is necessary and nowhere near sufficient, because `13,9,12` and
+`2,9,12` have identical slack and land 68 pieces apart. The best triple found, at the budget where
+the ungated engine reaches 247/450, reaches 159/292.
+
+**What this refutes, and what it does not.** It refutes the ramp on this engine, decisively and for
+every colour triple the piece set allows. It does not refute colour-quota gating as an idea, because
+the measurement above also says why the ramp cannot be read the way it was transcribed: a demand of
+119 out of 122 by placement 160 is within two sides of impossible for **any** engine using these
+pieces, Blackwood's included. Something in the transcription does not transfer, and the most likely
+candidate is the depth axis. A frame-first order has all 24 sides of the border colour down by
+placement 60; our banded order is 10 rows deep at placement 160 and has only 34 of the 60 frame cells
+filled, none of them chosen for their colour. The ramp and the fill order it was tuned on are not
+separable, and we copied one without the other.
+
+So the gate stays built, off by default, and exposed to the tuner, because it is cheap to carry and
+the lab can now settle it with data instead of this paragraph. The technique's remaining value here
+is a question about fill order, not about colours -- and that is a different piece of work.
+
 ### Fill orders, measured without running a search
 
 Two different things are worth knowing about a fill order, and they disagree, so `core.Bench order`
@@ -487,6 +624,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `FillOrderTest` | The fixed orders, structurally: the north-and-west invariant at every size from 2 to 20, the exact phase boundaries of the banded order at 16×16, and both frontier measures. No search is run. |
 | `ScanSolverTest` | What only the scan engine can get wrong: that it places in exactly its fill order, that the hint piece appears where it must and nowhere else, that an impossible fixed placement is rejected with the cell and reason in the message, that the node budget is not overshot, and that a second run of the same solver is identical. |
 | `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree. |
+| `ColourQuotaTest` | The colour quota: Blackwood's ramp reproduced at 16x16 and scaled elsewhere, that the tracked colours really are offered first (which is what makes abandoning a run sound), that the floor is met at every depth of the board the engine returns, that the gate only ever *removes* solutions from an exhaustive run, and that a colour the instance cannot count is refused with the colour in the message. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
 | `CrossValidationTest` | **The strongest evidence:** exhaustive solution counts vs the naive reference solver, for both fast engines, with slipping off. |
 

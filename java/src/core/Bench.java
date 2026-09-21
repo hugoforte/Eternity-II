@@ -11,6 +11,8 @@ package core;
  *   java -cp out core.Bench slip        # edge slipping off vs on, equal nodes
  *   java -cp out core.Bench order       # fill-order frontiers, no search
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
+ *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
+ *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
  *
  * Several different questions are measured, because they have different
  * answers:
@@ -44,6 +46,22 @@ package core;
  *     that spread says whether the natural candidate order was good luck or
  *     good design.  And the best of N against the single run is the number a
  *     lab with N cores actually gets.
+ *
+ *  7. "quota": ScanSolver against itself with the colour-quota gate off and
+ *     on, at equal node counts, on top of the configuration that is otherwise
+ *     best.  The gate is deliberately incomplete, so a wall-clock comparison
+ *     would say nothing; equal nodes is the only honest one.  It ends with a
+ *     diagnostic that needs no search at all -- the ramp's demand against the
+ *     most any set of pieces could possibly carry -- because when those two
+ *     are within a few sides of each other the gate is not a heuristic but
+ *     very nearly a contradiction, and the search result alone would not say
+ *     which.
+ *
+ *  8. "colours": which three colours the quota should track.  Every (one
+ *     border, two interior) triple is ranked by that same arithmetic headroom,
+ *     and the best, the worst and Blackwood's are then actually run, so the
+ *     table shows both what the piece set allows and what the search does with
+ *     it.
  */
 public final class Bench {
 
@@ -68,6 +86,15 @@ public final class Bench {
             budgetBenchmark(budget);
         } else if (which.equals("all")) {
             budgetBenchmark(20000000L);
+        }
+        if (which.equals("quota")) {
+            if (args.length > 1) quotaBenchmark(new long[] { parseLong(args[1], 100000000L) });
+            else quotaBenchmark(new long[] { 100000000L, 1000000000L });
+        } else if (which.equals("all")) {
+            quotaBenchmark(new long[] { 20000000L });
+        }
+        if (which.equals("colours")) {
+            colourBenchmark((args.length > 1) ? parseLong(args[1], 100000000L) : 100000000L);
         }
         if (which.equals("seeds")) {
             int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
@@ -203,6 +230,224 @@ public final class Bench {
             }
         }
         System.out.println();
+    }
+
+    // ------------------------------------------------------------ colour quota
+
+    /** Blackwood's three colours, read as indices into our own piece table. */
+    private static final String BLACKWOOD_COLOURS = "13,16,10";
+
+    /**
+     * The colour-quota gate off against on, at equal node budgets, on top of
+     * the configuration that is otherwise best here (banded order, Verhaard's
+     * slip schedule).  The gate abandons subtrees that could hold solutions, so
+     * it can only be judged on what it reaches per node, never on speed.
+     */
+    private static void quotaBenchmark(long[] budgets) {
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: colour quota off vs on, equal nodes");
+        System.out.println(" fillOrder=banded  slipSchedule=verhaard  quotaColours="
+                           + BLACKWOOD_COLOURS);
+        System.out.println("=================================================================");
+        System.out.println(" budget      quota   ms      nodes/sec    placed   edges  breaks");
+
+        ScanSolver ungated = null;
+        for (int b = 0; b < budgets.length; b++) {
+            for (int on = 0; on < 2; on++) {
+                ScanSolver s = runQuota(budgets[b], on == 1, BLACKWOOD_COLOURS);
+                if (on == 0) ungated = s;
+            }
+        }
+        System.out.println();
+        reportQuotaHeadroom(BLACKWOOD_COLOURS, ungated);
+    }
+
+    /** One run at one budget, reported as a row. */
+    private static ScanSolver runQuota(long budget, boolean gated, String colours) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        cfg.quotaColours = colours;
+        if (gated) cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+        s.maxNodes = budget;
+        long t0 = System.nanoTime();
+        s.solve();
+        long ms = (System.nanoTime() - t0) / 1000000L;
+        System.out.println(" " + pad("" + budget, 11)
+            + " " + pad(gated ? "on" : "off", 7)
+            + " " + pad("" + ms, 7)
+            + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+            + " " + pad(s.bestPlaced + "/256", 8)
+            + " " + pad(s.bestMatchedEdges + "/480", 7)
+            + " " + s.bestBreaks);
+        String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
+                                               false, s.bestBreaks);
+        if (err != null) System.out.println("   INVALID BOARD: " + err);
+        return s;
+    }
+
+    /**
+     * Why the gate lands where it does, without running a search.
+     *
+     * The ramp demands R(d) quota-colour sides by placement d.  No d pieces of
+     * this set can carry more than the sum of the d largest per-piece counts,
+     * so that difference bounds the room the search has before edge matching
+     * takes any of it away.  The ungated board's own curve is printed beside
+     * it: that is what the engine reaches when nothing is forcing it.
+     */
+    private static void reportQuotaHeadroom(String colours, ScanSolver ungated) {
+        Instance inst = Instance.eternity2();
+        int[] floor = quotaFloor(colours);
+        int[] per = quotaCounts(inst, colourList(colours));
+        int[] most = bestPossible(per);
+        int[] natural = (ungated == null) ? null : boardCurve(inst, per, ungated);
+
+        System.out.println(" the ramp against what the piece set could possibly supply");
+        System.out.println(" depth   ramp asks   most any pieces hold   ungated board reaches");
+        int[] pts = { 16, 32, 64, 96, 128, 160 };
+        for (int i = 0; i < pts.length; i++) {
+            int d = pts[i];
+            String reached = (natural == null || d >= natural.length) ? "-" : ("" + natural[d]);
+            System.out.println(" " + pad("" + d, 7)
+                + " " + pad("" + floor[d], 11)
+                + " " + pad("" + most[d], 22)
+                + " " + reached);
+        }
+        System.out.println();
+    }
+
+    /**
+     * Every (one border, two interior) triple, ranked by the tightest the ramp
+     * ever gets on it, and then the extremes of that ranking actually run.
+     * Which colours to track is the one part of the technique that was brute
+     * forced in the source material at a hundred minutes a combination, so the
+     * cheap arithmetic ranking is what makes a handful of runs worth anything.
+     */
+    private static void colourBenchmark(long budget) {
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: which three colours the quota tracks");
+        System.out.println(" " + budget + " nodes each, fillOrder=banded, slipSchedule=verhaard");
+        System.out.println("=================================================================");
+
+        Instance inst = Instance.eternity2();
+        int[] border = { 1, 2, 3, 13, 14 };
+        int[] interior = { 4, 5, 6, 7, 8, 9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 22 };
+        int[] floor = quotaFloor(BLACKWOOD_COLOURS);
+        String[] spec = new String[border.length * interior.length * interior.length];
+        int[] slack = new int[spec.length];
+        int count = 0;
+        for (int b = 0; b < border.length; b++) {
+            for (int i = 0; i < interior.length; i++) {
+                for (int j = i + 1; j < interior.length; j++) {
+                    spec[count] = border[b] + "," + interior[i] + "," + interior[j];
+                    slack[count] = worstSlack(quotaCounts(inst, colourList(spec[count])), floor);
+                    count++;
+                }
+            }
+        }
+        // Insertion sort, descending by slack: a few hundred triples, and the
+        // suite may not assume a JDK with anything fancier in it.
+        for (int i = 1; i < count; i++) {
+            String sp = spec[i];
+            int sl = slack[i];
+            int j = i - 1;
+            while (j >= 0 && slack[j] < sl) { spec[j + 1] = spec[j]; slack[j + 1] = slack[j]; j--; }
+            spec[j + 1] = sp;
+            slack[j + 1] = sl;
+        }
+        System.out.println(" " + count + " triples ranked by the least room the ramp ever"
+                           + " leaves them;");
+        System.out.println(" a negative number means no arrangement of pieces could satisfy"
+                           + " it at all.");
+        System.out.println();
+        System.out.println(" colours     total sides   worst slack   ms      placed   edges  breaks");
+
+        String[] chosen = { spec[0], spec[1], spec[2], BLACKWOOD_COLOURS, spec[count - 1] };
+        for (int k = 0; k < chosen.length; k++) {
+            int[] per = quotaCounts(inst, colourList(chosen[k]));
+            int total = 0;
+            for (int i = 0; i < per.length; i++) total += per[i];
+            SolverConfig cfg = new SolverConfig();
+            cfg.engine = SolverConfig.ENGINE_SCAN;
+            cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+            cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+            cfg.quotaColours = chosen[k];
+            ScanSolver s = new ScanSolver(inst, cfg);
+            s.maxNodes = budget;
+            long t0 = System.nanoTime();
+            s.solve();
+            long ms = (System.nanoTime() - t0) / 1000000L;
+            System.out.println(" " + pad(chosen[k], 11)
+                + " " + pad("" + total, 13)
+                + " " + pad("" + worstSlack(per, floor), 13)
+                + " " + pad("" + ms, 7)
+                + " " + pad(s.bestPlaced + "/256", 8)
+                + " " + pad(s.bestMatchedEdges + "/480", 7)
+                + " " + s.bestBreaks);
+            String err = Validator.validatePartial(inst, s.bestBoard, false, s.bestBreaks);
+            if (err != null) System.out.println("   INVALID BOARD: " + err);
+        }
+        System.out.println();
+    }
+
+    /** The published ramp, read off an engine built with it. */
+    private static int[] quotaFloor(String colours) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        cfg.quotaColours = colours;
+        return new ScanSolver(Instance.eternity2(), cfg).quotaFloors();
+    }
+
+    private static int[] colourList(String colours) {
+        return SolverConfig.parseColourList(colours);
+    }
+
+    /** Piece -> how many of its four sides carry one of these colours. */
+    private static int[] quotaCounts(Instance inst, int[] colours) {
+        boolean[] counted = new boolean[inst.numColours];
+        for (int i = 0; i < colours.length; i++) counted[colours[i]] = true;
+        int[] per = new int[inst.numPieces];
+        for (int id = 0; id < inst.numPieces; id++) {
+            int p = inst.packedSides[id];
+            int c = 0;
+            if (counted[Sides.left(p)]) c++;
+            if (counted[Sides.top(p)]) c++;
+            if (counted[Sides.right(p)]) c++;
+            if (counted[Sides.bottom(p)]) c++;
+            per[id] = c;
+        }
+        return per;
+    }
+
+    /** Depth -> the most quota-colour sides any that many pieces could carry. */
+    private static int[] bestPossible(int[] per) {
+        int[] sorted = new int[per.length];
+        System.arraycopy(per, 0, sorted, 0, per.length);
+        java.util.Arrays.sort(sorted);
+        int[] out = new int[per.length + 1];
+        for (int d = 1; d <= per.length; d++) out[d] = out[d - 1] + sorted[per.length - d];
+        return out;
+    }
+
+    /** The tightest the ramp ever gets, over the depths it constrains. */
+    private static int worstSlack(int[] per, int[] floor) {
+        int[] most = bestPossible(per);
+        int worst = Integer.MAX_VALUE;
+        for (int d = 1; d < floor.length && d < most.length; d++) {
+            int slack = most[d] - floor[d];
+            if (slack < worst) worst = slack;
+        }
+        return worst;
+    }
+
+    /** Depth -> quota-colour sides consumed by the board a run actually found. */
+    private static int[] boardCurve(Instance inst, int[] per, ScanSolver s) {
+        int[] variants = s.bestOrderVariants();
+        int len = s.bestOrderLength();
+        int[] out = new int[len + 1];
+        for (int d = 0; d < len; d++) out[d + 1] = out[d] + per[variants[d] >>> 2];
+        return out;
     }
 
     // ------------------------------------------------------------- seeds

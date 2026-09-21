@@ -86,6 +86,43 @@ SETTINGS = [
         ],
     },
 
+    {
+        "key": "quotaSchedule",
+        "label": "Colour quota",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "none",
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: make the solver spend three chosen colours early, and abandon any line of play that falls behind.",
+        "options": [
+            {"value": "none", "label": "Never",
+             "blurb": "No quota. The solver spends the colours whenever they happen to fit."},
+            {"value": "blackwood", "label": "Blackwood",
+             "blurb": "The published ramp: 28 of those sides down by square 26, rising to 119 by square 160. Measured here as far too demanding for this board's route across it -- it stalls the search around square 70."},
+        ],
+    },
+    {
+        "key": "quotaColours",
+        "label": "Quota colours",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "13,16,10",
+        "tunable": True,
+        "activeWhen": {"key": "quotaSchedule", "values": ["blackwood"]},
+        "blurb": "Which three colours the quota counts: one border colour and two interior ones. Ranked by how much room the ramp leaves them on our piece table.",
+        "options": [
+            {"value": "13,16,10", "label": "Blackwood's",
+             "blurb": "His three colour numbers read as ours. One border colour and two interior ones, as he described, and 2 sides clear of impossible."},
+            {"value": "2,9,12", "label": "Most room",
+             "blurb": "The roomiest of all 680 triples on this piece table, and still only 4 sides clear of impossible."},
+            {"value": "3,9,12", "label": "Second roomiest",
+             "blurb": "Same two interior colours, a different border one."},
+            {"value": "13,9,12", "label": "Third roomiest",
+             "blurb": "Same again, on Blackwood's border colour."},
+        ],
+    },
+
     # ------------------------------------------------------------ strategy
     {
         "key": "cellOrder",
