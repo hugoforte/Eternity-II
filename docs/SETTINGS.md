@@ -50,9 +50,9 @@ Which search engine runs the attempt. They obey different settings.
 | Choice | What it does |
 |---|---|
 | **Most-constrained** | Picks the hardest square each step and prunes hard. ~1.4M steps/sec. |
-| **Fixed scan** | Fills a fixed order with a precomputed candidate table. ~50M steps/sec and reaches further. Repeats one descent unless the piece order is shuffled. |
+| **Fixed scan** | Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further. Deterministic for a given seed, so a fresh seed each attempt is what makes repeats differ. |
 
-Default: **Most-constrained** (`mrv`)
+Default: **Fixed scan** (`scan`)
 
 ### Fill order
 
@@ -83,7 +83,7 @@ Only has an effect when Engine is **Fixed scan**.
 | **Blackwood** | One mismatch allowed from square 201, rising to ten by square 239. The published schedule behind the best known result. |
 | **Verhaard** | Starts at square 193 and allows twelve by square 240. More generous, and measured further on this engine. |
 
-Default: **Blackwood** (`blackwood`)
+Default: **Verhaard** (`verhaard`)
 
 ### Colour quota
 
@@ -345,7 +345,7 @@ Default: `5M`
 
 `randomSeed` &middot; slider &middot; **not** tuned by the learner
 
-Pin this to reproduce a run exactly. The learner randomises it each attempt.
+Apply & restart reproduces a run exactly with this seed for its first attempt. Every later attempt, pinned or learner-chosen, gets a fresh one.
 
 Range: `0` to `999999` in steps of `1`
 

@@ -18,6 +18,7 @@ live search keeps running undisturbed.
 import json
 import os
 import queue
+import random
 import shutil
 import subprocess
 import sys
@@ -104,6 +105,9 @@ class Supervisor:
         # pinned user configuration, or None to follow the learner
         self._pinned_config = None
         self._pinned_is_user = False
+        # True until the pinned config has run once with its seed exactly as
+        # given; see _next_config
+        self._pinned_first_run = False
 
         # live state
         self.live = {
@@ -116,6 +120,8 @@ class Supervisor:
             "board": None,
             "placed": 0,
             "best": 0,
+            "edges": 0,
+            "breaks": 0,
             "nodes": 0,
             "nps": 0,
             "ms": 0,
@@ -181,6 +187,7 @@ class Supervisor:
         with self._lock:
             self._pinned_config = cfg
             self._pinned_is_user = bool(user_defined)
+            self._pinned_first_run = True
             self._skip_requested = True
             self._paused = False
         self._kill_engine()
@@ -242,9 +249,17 @@ class Supervisor:
         with self._lock:
             pinned = self._pinned_config
             is_user = self._pinned_is_user
+            first_run = self._pinned_first_run
+            self._pinned_first_run = False
         if pinned is not None:
             cfg = dict(pinned)
-            # a pinned config keeps its seed so the user can reproduce a run
+            # The first attempt after "Apply & restart" keeps the seed it was
+            # given, so a specific run can be reproduced exactly. Every later
+            # attempt of the same pinned config gets a fresh one: the engines
+            # are deterministic for a given seed, so repeating it would just
+            # rebuild the identical board forever and learn nothing.
+            if not first_run:
+                cfg["randomSeed"] = random.randint(0, 999999)
             return cfg, is_user, "user"
         cfg = self.tuner.suggest()
         optimal = self.tuner.optimal_config()
@@ -269,6 +284,8 @@ class Supervisor:
                 "board": None,
                 "placed": 0,
                 "best": 0,
+                "edges": 0,
+                "breaks": 0,
                 "nodes": 0,
                 "nps": 0,
                 "ms": 0,
@@ -373,6 +390,12 @@ class Supervisor:
                 self.live["nps"] = event["nps"]
             if kind == "best":
                 self.live["best"] = max(self.live["best"], event.get("placed", 0))
+                # "edges"/"breaks" describe the board a "best" event carries,
+                # so they move together with it rather than independently
+                # maxing (a later, deeper board can carry fewer edges once
+                # slipping is in play).
+                self.live["edges"] = event.get("edges", self.live["edges"])
+                self.live["breaks"] = event.get("breaks", self.live["breaks"])
             else:
                 self.live["best"] = max(self.live["best"], event.get("best", 0))
             payload = {
@@ -381,6 +404,8 @@ class Supervisor:
                 "board": board,
                 "placed": self.live["placed"],
                 "best": self.live["best"],
+                "edges": self.live["edges"],
+                "breaks": self.live["breaks"],
                 "nodes": self.live["nodes"],
                 "nps": self.live["nps"],
                 "ms": self.live["ms"],
@@ -438,6 +463,7 @@ class Supervisor:
             valid=bool(end.get("valid", True)),
             best_depth=best_depth,
             matched_edges=matched_edges,
+            breaks=breaks,
             nodes=nodes,
             duration_ms=int(end.get("ms", 0)),
             nodes_per_sec=int(end.get("nps", 0)),

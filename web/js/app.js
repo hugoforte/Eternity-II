@@ -31,11 +31,16 @@ const ui = {
   modeDetail: $('modeDetail'),
   btnGoLive: $('btnGoLive'),
   chipAttempt: $('chipAttempt'),
+  chipDepthWrap: $('chipDepthWrap'),
   chipDepth: $('chipDepth'),
+  chipBreaks: $('chipBreaks'),
+  chipEdges: $('chipEdges'),
   chipNodes: $('chipNodes'),
   chipSpeed: $('chipSpeed'),
   chipRecord: $('chipRecord'),
   chipRecordWrap: $('chipRecordWrap'),
+  chipEdgesRecord: $('chipEdgesRecord'),
+  chipEdgesRecordWrap: $('chipEdgesRecordWrap'),
   btnPause: $('btnPause'),
   pauseIcon: $('pauseIcon'),
   pauseText: $('pauseText'),
@@ -79,6 +84,8 @@ const state = {
     board: null,
     placed: 0,
     best: 0,
+    edges: 0,
+    breaks: 0,
     nodes: 0,
     nps: 0,
     ms: 0,
@@ -97,6 +104,7 @@ const state = {
   },
   stats: {},
   recordAttemptId: null,
+  recordEdgesAttemptId: null,
   loadedAttempts: 0,
   pendingCustom: false,
   userEdited: false,
@@ -161,6 +169,8 @@ const lessons = new LessonsPanel({
 
     applyLiveStatus(boot.live);
     updateRecord(boot.stats ? boot.stats.bestDepth : 0, boot.stats ? boot.stats.bestAttemptId : null);
+    updateEdgesRecord(boot.stats ? boot.stats.bestMatchedEdges : 0,
+                       boot.stats ? boot.stats.bestEdgesAttemptId : null);
   } catch (err) {
     toast(`Could not reach the server: ${err.message}`);
   }
@@ -169,11 +179,26 @@ const lessons = new LessonsPanel({
     onOpen: () => ui.conn.classList.remove('down'),
     onError: () => ui.conn.classList.add('down'),
     hello: (data) => {
-      if (data && data.meta && !state.meta) {
+      if (!data) return;
+      if (data.meta && !state.meta) {
         state.meta = data.meta;
         boardView.setMeta(data.meta);
       }
-      if (data && data.status) applyLiveStatus(data.status);
+      if (data.status) applyLiveStatus(data.status);
+      // A reconnect happens after every server restart, and possibly after a
+      // dropped connection with nothing having finished in between -- so the
+      // record and the settings panel's "optimal" figures must be resynced
+      // here too, exactly as attempt_finished would, or they can be left
+      // showing numbers from before the restart indefinitely.
+      if (data.stats) {
+        state.stats = data.stats;
+        history.setStats(data.stats);
+        updateRecord(data.stats.bestDepth, data.stats.bestAttemptId);
+        updateEdgesRecord(data.stats.bestMatchedEdges, data.stats.bestEdgesAttemptId);
+      }
+      if (data.optimal || data.optimalDetails) {
+        settings.setOptimal(data.optimal, data.optimalDetails);
+      }
     },
     meta: (data) => {
       state.meta = data;
@@ -249,6 +274,8 @@ function applyLiveStatus(status) {
     attemptId: status.attemptId ?? state.live.attemptId,
     placed: status.placed ?? state.live.placed,
     best: status.best ?? state.live.best,
+    edges: status.edges ?? state.live.edges,
+    breaks: status.breaks ?? state.live.breaks,
     nodes: status.nodes ?? state.live.nodes,
     nps: status.nps ?? state.live.nps,
     ms: status.ms ?? state.live.ms,
@@ -272,6 +299,8 @@ function onLiveFrame(data) {
   state.live.attemptId = data.attemptId;
   state.live.placed = data.placed || 0;
   state.live.best = data.best || 0;
+  state.live.edges = data.edges || 0;
+  state.live.breaks = data.breaks || 0;
   state.live.nodes = data.nodes || 0;
   state.live.nps = data.nps || 0;
   state.live.ms = data.ms || 0;
@@ -299,6 +328,8 @@ function onAttemptStarted(data) {
   state.live.source = data.source;
   state.live.best = 0;
   state.live.placed = 0;
+  state.live.edges = 0;
+  state.live.breaks = 0;
   state.live.nodes = 0;
   state.liveSamples = [];
 
@@ -309,7 +340,12 @@ function onAttemptStarted(data) {
     drawSpark([], 'depth over time (live)');
   }
   updateBadge();
-  if (!state.pendingCustom) settings.setValues(data.config);
+  // Attempts now finish in a second or two under the fast-scan default, so a
+  // background attempt_started event can easily land while the user is still
+  // mid-edit. Overwriting the panel then would silently discard a change
+  // they haven't had a chance to apply yet -- even though the "unsaved
+  // changes" badge (see updateBadge) is still telling them it's pending.
+  if (!state.pendingCustom && !state.userEdited) settings.setValues(data.config);
   state.pendingCustom = false;
 }
 
@@ -319,6 +355,7 @@ function onAttemptFinished(data) {
     state.stats = data.stats;
     history.setStats(data.stats);
     updateRecord(data.stats.bestDepth, data.stats.bestAttemptId);
+    updateEdgesRecord(data.stats.bestMatchedEdges, data.stats.bestEdgesAttemptId);
   }
   if (data.attempt) {
     history.prepend(data.attempt);
@@ -333,6 +370,8 @@ function onAttemptFinished(data) {
 function renderLiveChips() {
   ui.chipAttempt.textContent = state.live.attemptId ? `#${state.live.attemptId}` : '—';
   setChip(ui.chipDepth, `${state.live.best}`, '/256');
+  setChipBreaks(state.live.breaks);
+  setChip(ui.chipEdges, `${state.live.edges}`, '/480');
   ui.chipNodes.textContent = formatNumber(state.live.nodes);
   setChip(ui.chipSpeed, formatNumber(state.live.nps), '/s');
 
@@ -356,13 +395,47 @@ function setChip(node, main, suffix) {
   }
 }
 
+/**
+ * Edge slipping can let the solver place every piece while a handful of them
+ * don't actually fit their neighbour, so the depth count alone would make a
+ * slipped board look flawless. This is deliberately just a small "N wrong"
+ * caveat next to the piece count, not a metric of its own -- edge counts
+ * don't mean anything to someone just watching the board fill up.
+ */
+function setChipBreaks(breaks) {
+  if (breaks > 0) {
+    ui.chipBreaks.textContent = `${breaks} wrong`;
+    ui.chipBreaks.hidden = false;
+    ui.chipDepthWrap.title =
+      `Most pieces placed in this attempt, ${breaks} of them not actually matching a neighbour`;
+  } else {
+    ui.chipBreaks.hidden = true;
+    ui.chipDepthWrap.title = 'Most pieces placed in this attempt';
+  }
+}
+
 function updateRecord(depth, attemptId) {
   if (depth === undefined || depth === null) return;
   ui.chipRecord.textContent = String(depth);
   state.recordAttemptId = attemptId ?? null;
   ui.chipRecordWrap.title = state.recordAttemptId
-    ? `All-time best across every attempt — click to replay attempt #${state.recordAttemptId}`
-    : 'All-time best across every attempt';
+    ? `All-time best pieces placed with no wrong sides — click to replay attempt #${state.recordAttemptId}`
+    : 'All-time best pieces placed with no wrong sides';
+}
+
+/**
+ * The edges record has no "no cheating" requirement the way the pieces
+ * record does: matched edges already price a break in (checksBefore - breaks),
+ * so a slipped board cannot inflate it. It is shown alongside the pieces
+ * record as a second, independent statistic, not a replacement for it.
+ */
+function updateEdgesRecord(matchedEdges, attemptId) {
+  if (matchedEdges === undefined || matchedEdges === null) return;
+  setChip(ui.chipEdgesRecord, String(matchedEdges), '/480');
+  state.recordEdgesAttemptId = attemptId ?? null;
+  ui.chipEdgesRecordWrap.title = state.recordEdgesAttemptId
+    ? `All-time best matched edges across every attempt, wrong sides and all — click to replay attempt #${state.recordEdgesAttemptId}`
+    : 'All-time best matched edges across every attempt, wrong sides and all';
 }
 
 /* ================================================================ replay */
@@ -386,12 +459,15 @@ async function openReplay(attemptId) {
     ui.modePill.innerHTML = `<span class="rec"></span>REPLAY #${attemptId}`;
 
     const custom = detail.userDefined ? ' · custom settings' : '';
+    const edgesPart = detail.matchedEdges != null ? `${detail.matchedEdges}/480 edges · ` : '';
     ui.modeDetail.textContent =
-      `${detail.bestDepth}/256 pieces · ${formatNumber(detail.nodes)} steps · ` +
+      `${detail.bestDepth}/256 pieces · ${edgesPart}${formatNumber(detail.nodes)} steps · ` +
       `${fmtDuration(detail.durationMs)}${custom}`;
 
     ui.chipAttempt.textContent = `#${attemptId}`;
     setChip(ui.chipDepth, String(detail.bestDepth), '/256');
+    setChipBreaks(detail.breaks || 0);
+    setChip(ui.chipEdges, String(detail.matchedEdges ?? 0), '/480');
     ui.chipNodes.textContent = formatNumber(detail.nodes);
     setChip(ui.chipSpeed, formatNumber(detail.nodesPerSec), '/s');
 
@@ -588,6 +664,11 @@ function wireControls() {
     else toast('No record attempt yet');
   });
 
+  ui.chipEdgesRecordWrap.addEventListener('click', () => {
+    if (state.recordEdgesAttemptId) openReplay(state.recordEdgesAttemptId);
+    else toast('No record attempt yet');
+  });
+
   ui.btnGoLive.addEventListener('click', goLive);
   ui.btnPlay.addEventListener('click', togglePlayback);
   ui.btnStepBack.addEventListener('click', () => { stopPlayback(); setReplayIndex(state.replay.index - 1); });
@@ -627,8 +708,9 @@ function wireControls() {
     try {
       await api.clearHistory();
       history.replaceAll([], 0);
-      history.setStats({ attempts: 0, bestDepth: 0, avgDepth: 0, totalNodes: 0 });
+      history.setStats({ attempts: 0, bestDepth: 0, bestMatchedEdges: 0, avgDepth: 0, totalNodes: 0 });
       updateRecord(0, null);
+      updateEdgesRecord(0, null);
       insights.render({ findings: [], analysis: null, stats: { attempts: 0, bestDepth: 0 } });
       lessons.render([]);
       if (state.mode === 'replay') goLive();
@@ -746,6 +828,10 @@ function buildLegend() {
   const note = document.createElement('span');
   note.textContent = 'grey = board border · tiles must match along every shared edge';
   frag.appendChild(note);
+  const slipNote = document.createElement('span');
+  slipNote.className = 'lg-slip';
+  slipNote.innerHTML = '<i class="lg-slip-swatch"></i> red tiles + glowing seam = the sides that don’t actually match';
+  frag.appendChild(slipNote);
   ui.legend.appendChild(frag);
 }
 

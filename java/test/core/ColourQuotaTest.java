@@ -32,6 +32,7 @@ public final class ColourQuotaTest {
         T.section("ColourQuotaTest: the colour quota in ScanSolver");
 
         itIsOffUnlessAskedFor();
+        itTracksBlackwoodsOwnThreeColours();
         itReproducesThePublishedRamp();
         itOffersTheTrackedColoursFirst();
         itHonoursTheFloorOnTheBoardItReturns();
@@ -62,7 +63,7 @@ public final class ColourQuotaTest {
         // entries and a different order.  Off, it must be the index it always
         // was -- otherwise "no slower with the gate off" would be a fiction.
         SolverConfig off = new SolverConfig();
-        off.quotaColours = "13,16,10";
+        off.quotaColours = "14,22,5";
         ScanSolver asked = new ScanSolver(inst, off);
         T.eq("naming colours without a schedule changes nothing about the index",
              plain.candidateEntryCount(), asked.candidateEntryCount());
@@ -74,6 +75,53 @@ public final class ColourQuotaTest {
                 gated.candidateEntryCount() > plain.candidateEntryCount(),
                 "gated " + gated.candidateEntryCount()
                 + " vs plain " + plain.candidateEntryCount());
+    }
+
+    // --------------------------------------------------------------- colours
+
+    /**
+     * The three colours are Blackwood's own, carried across from his piece
+     * table into this one's numbering.  He writes them {@code 13, 16, 10}; his
+     * table numbers the border colours 1, 5, 9, 13, 17 where this one numbers
+     * them 1, 2, 3, 13, 14, and under the relabelling that maps one table onto
+     * the other his three are {@code 14, 22, 5}.
+     *
+     * Reading his numbers as ours instead gives a triple of the same SHAPE --
+     * one border colour, two interior, 122 sides -- which is why the mistake
+     * survived.  What it does not give is the property he chose them for, and
+     * remarked on in his source: "there is a lot of overlap between these
+     * sides".  Three pieces carry all three of his colours.  No piece carries
+     * all three of the ones read as ours.  That overlap is the fingerprint, so
+     * it is what this checks.
+     */
+    private static void itTracksBlackwoodsOwnThreeColours() {
+        Instance inst = Instance.eternity2();
+        int[] colours = new ScanSolver(inst, blackwood()).quotaColours();
+        T.eqIntArray("the quota tracks Blackwood's three colours in our numbering",
+                     new int[] { 5, 14, 22 }, sorted(colours));
+
+        int[] occurrences = sidesPerColour(inst);
+        int border = 0;
+        for (int i = 0; i < colours.length; i++) if (occurrences[colours[i]] == 24) border++;
+        T.eq("one of the three is a border colour, as he describes", 1, border);
+
+        int[] per = sidesPerPiece(inst, colours);
+        int sides = 0;
+        int carryingAllThree = 0;
+        for (int id = 0; id < per.length; id++) {
+            sides += per[id];
+            if (per[id] == 3) carryingAllThree++;
+        }
+        T.eq("they are carried on 122 sides of the piece set", 122, sides);
+        T.eq("and three pieces carry all three of them -- his overlap",
+             3, carryingAllThree);
+    }
+
+    /** The default config, with his ramp switched on. */
+    private static SolverConfig blackwood() {
+        SolverConfig cfg = new SolverConfig();
+        cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        return cfg;
     }
 
     // ------------------------------------------------------------------ ramp
@@ -313,11 +361,11 @@ public final class ColourQuotaTest {
         cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
         Instance small = Generator.generate(4, 3, 91L, true, false);
 
-        cfg.quotaColours = "13,16,10";
+        cfg.quotaColours = "14,22,5";
         String message = refusal(small, cfg);
         T.notNull("a colour the instance does not have is refused", message);
         T.check("and the message says which colour and what the range is",
-                message != null && message.indexOf("13") >= 0
+                message != null && message.indexOf("14") >= 0
                 && message.indexOf("0..3") >= 0, message);
 
         cfg.quotaColours = "0,1,2";
@@ -334,9 +382,9 @@ public final class ColourQuotaTest {
         SolverConfig parsed = new SolverConfig();
         parsed.applyArg("--quotaColours=1,two,3");
         T.eq("a list that is not numbers leaves the setting alone",
-             "13,16,10", parsed.quotaColours);
+             "14,22,5", parsed.quotaColours);
         parsed.applyArg("--quotaColours=4,4");
-        T.eq("and nor does a list that repeats a colour", "13,16,10", parsed.quotaColours);
+        T.eq("and nor does a list that repeats a colour", "14,22,5", parsed.quotaColours);
         parsed.applyArg("--quotaColours=1, 2 ,3");
         T.eq("a well-formed list is taken, spaces and all", "1, 2 ,3", parsed.quotaColours);
     }
@@ -352,6 +400,26 @@ public final class ColourQuotaTest {
     }
 
     // --------------------------------------------------------------- helpers
+
+    /** Colour -> how many of the piece set's half-edges carry it. */
+    private static int[] sidesPerColour(Instance inst) {
+        int[] occurrences = new int[inst.numColours];
+        for (int id = 0; id < inst.numPieces; id++) {
+            int p = inst.packedSides[id];
+            occurrences[Sides.left(p)]++;
+            occurrences[Sides.top(p)]++;
+            occurrences[Sides.right(p)]++;
+            occurrences[Sides.bottom(p)]++;
+        }
+        return occurrences;
+    }
+
+    /** A copy in ascending order, so a colour list compares by set. */
+    private static int[] sorted(int[] values) {
+        int[] out = values.clone();
+        java.util.Arrays.sort(out);
+        return out;
+    }
 
     /** Piece -> how many of its four sides carry one of the tracked colours. */
     private static int[] sidesPerPiece(Instance inst, int[] colours) {

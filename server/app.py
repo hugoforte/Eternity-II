@@ -320,7 +320,21 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.flush()
 
         try:
-            write_event("hello", {"status": sup.status(), "meta": sup.meta})
+            # A client reconnects here after every server restart (and any
+            # network blip), and until now that only refreshed the live
+            # attempt -- the all-time record and the settings panel's
+            # "optimal" figures kept whatever they were before the restart
+            # until the next attempt happened to finish. A reconnect should
+            # never leave the header showing a number that predates it, so
+            # this is a full resync of everything the client cannot safely
+            # assume is still current: the same fields attempt_finished sends.
+            write_event("hello", {
+                "status": sup.status(),
+                "meta": sup.meta,
+                "stats": STATE["db"].stats(),
+                "optimal": sup.tuner.optimal_config(),
+                "optimalDetails": sup.tuner.optimal_details(),
+            })
             last_ping = time.time()
             while True:
                 try:

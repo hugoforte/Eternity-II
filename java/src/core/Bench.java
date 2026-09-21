@@ -235,7 +235,7 @@ public final class Bench {
     // ------------------------------------------------------------ colour quota
 
     /** Blackwood's three colours, read as indices into our own piece table. */
-    private static final String BLACKWOOD_COLOURS = "13,16,10";
+    private static final String BLACKWOOD_COLOURS = "14,22,5";
 
     /**
      * The colour-quota gate off against on, at equal node budgets, on top of

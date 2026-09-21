@@ -250,12 +250,45 @@ export class SettingsPanel {
     target.appendChild(text);
     if (detail.reason) text.title = detail.reason;
 
+    const dormant = this.dormancyNote(s);
+    if (dormant) {
+      const note = document.createElement('span');
+      note.className = 'opt-dormant';
+      note.textContent = ` — ${dormant}`;
+      target.appendChild(note);
+    }
+
     if (!eq(value, optimalValue)) {
       const snap = el('button', null, 'snap back');
       snap.type = 'button';
       snap.addEventListener('click', () => this.setValue(s.key, optimalValue));
       target.appendChild(snap);
     }
+  }
+
+  /**
+   * A conditional setting only earns fresh evidence on attempts where its own
+   * dependency happens to hold a qualifying value (see schema.py's
+   * `activeWhen`). Once the learner has firmly converged on a dependency
+   * value that does not qualify -- e.g. cellOrder's dependency is engine=mrv,
+   * and the learner has settled on engine=scan -- that stops happening except
+   * through the rare epsilon-greedy nudge, and the number above can sit
+   * unchanged for a long time. That is the learner correctly not wasting
+   * attempts on a setting that no longer matters, not a stuck display, so
+   * this says so instead of leaving it looking frozen.
+   */
+  dormancyNote(s) {
+    const dep = s.activeWhen;
+    if (!dep) return null;
+    const depOptimal = this.optimal[dep.key];
+    if (dep.values.some((v) => eq(v, depOptimal))) return null;
+    const depMeta = this.settings.find((x) => x.key === dep.key);
+    const depOption = depMeta && depMeta.options
+      ? depMeta.options.find((o) => eq(o.value, depOptimal))
+      : null;
+    const depLabel = depMeta ? depMeta.label : dep.key;
+    const depValueLabel = depOption ? depOption.label : String(depOptimal);
+    return `rarely explored now that ${depLabel}'s optimal is ${depValueLabel}`;
   }
 
   refreshMarkers() {

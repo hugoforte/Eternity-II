@@ -2,6 +2,7 @@ package app;
 
 import core.Instance;
 import core.MrvSolver;
+import core.PortfolioSearch;
 import core.ScanSolver;
 import core.Search;
 import core.SolveListener;
@@ -43,6 +44,13 @@ import java.io.PrintWriter;
  * With {@code --watchStdin=1}, writing "stop" to stdin (or closing it) makes the
  * engine wind down cleanly and still emit its "end" record, so the server never
  * loses an attempt's results even when it kills the run early.
+ *
+ * With {@code engine=scan}, the attempt runs as a {@link PortfolioSearch} of
+ * {@code --workers} independently-seeded descents (default: one per available
+ * core) instead of a single one, and reports whichever finds the best board --
+ * see that class for why this is safe and what it costs. {@code --workers=1}
+ * forces the plain single-descent {@link ScanSolver}. MRV attempts are never
+ * parallelised this way.
  */
 public final class Engine implements SolveListener {
 
@@ -73,6 +81,9 @@ public final class Engine implements SolveListener {
         int frameMs = 100;
         boolean watchStdin = false;
         boolean clues = false;
+        // 0 means "auto": one worker per available core, decided in run() once
+        // we know whether this attempt even uses the engine that supports it.
+        int workers = 0;
 
         for (int i = 0; i < args.length; i++) {
             String a = args[i];
@@ -84,6 +95,8 @@ public final class Engine implements SolveListener {
                 clues = a.substring(8).equals("all");
             } else if (a.startsWith("--watchStdin=")) {
                 watchStdin = a.substring(13).equals("1") || a.substring(13).equals("true");
+            } else if (a.startsWith("--workers=")) {
+                workers = parseIntSafe(a.substring(10), 0);
             } else {
                 cfg.applyArg(a);
             }
@@ -91,7 +104,7 @@ public final class Engine implements SolveListener {
 
         Engine e = new Engine();
         e.frameIntervalNanos = (long) frameMs * 1000000L;
-        e.run(cfg, sampleEvery, watchStdin, clues);
+        e.run(cfg, sampleEvery, watchStdin, clues, workers);
     }
 
     private static int parseIntSafe(String s, int dflt) {
@@ -104,12 +117,15 @@ public final class Engine implements SolveListener {
     // ------------------------------------------------------------------ run
 
     private void run(SolverConfig cfg, long sampleEvery, boolean watchStdin,
-                     boolean clues) {
+                     boolean clues, int workers) {
         out = new PrintWriter(new OutputStreamWriter(System.out), false);
         inst = clues ? Instance.eternity2StrictCanonical() : Instance.eternity2();
-        solver = (cfg.engine == SolverConfig.ENGINE_SCAN)
-               ? (Search) new ScanSolver(inst, cfg)
-               : (Search) new MrvSolver(inst, cfg);
+        if (cfg.engine == SolverConfig.ENGINE_SCAN) {
+            int n = (workers > 0) ? workers : Runtime.getRuntime().availableProcessors();
+            solver = (n > 1) ? new PortfolioSearch(inst, cfg, n) : new ScanSolver(inst, cfg);
+        } else {
+            solver = new MrvSolver(inst, cfg);
+        }
         solver.setListener(this);
         solver.setSampleEveryNodes(sampleEvery);
         solver.setStopAtFirstSolution(true);
@@ -172,8 +188,15 @@ public final class Engine implements SolveListener {
     }
 
     // ------------------------------------------------------------- listener
+    //
+    // Under a PortfolioSearch, these fire from whichever worker thread is
+    // currently the champion, and which one that is can change between two
+    // threads' own checks of that fact -- so two calls can legitimately
+    // overlap in real time. `synchronized` serialises them onto the shared
+    // sample buffer and stdout writer instead of just the write, since
+    // recordSample()'s array indices are not safe to race either.
 
-    public void onNewBest(Search s) {
+    public synchronized void onNewBest(Search s) {
         recordSample(s);
         StringBuilder sb = new StringBuilder(4096);
         sb.append("{\"type\":\"best\",\"ms\":").append(ms());
@@ -187,7 +210,7 @@ public final class Engine implements SolveListener {
         emit(sb.toString());
     }
 
-    public void onSample(Search s) {
+    public synchronized void onSample(Search s) {
         recordSample(s);
         long now = System.nanoTime();
         if (now - lastFrameNanos < frameIntervalNanos) return;
@@ -207,7 +230,7 @@ public final class Engine implements SolveListener {
         emit(sb.toString());
     }
 
-    public void onRestart(Search s, int index) {
+    public synchronized void onRestart(Search s, int index) {
         emit("{\"type\":\"restart\",\"ms\":" + ms()
              + ",\"nodes\":" + s.nodes() + ",\"index\":" + index + "}");
     }
@@ -306,7 +329,9 @@ public final class Engine implements SolveListener {
         sb.append(']');
     }
 
-    private void emit(String line) {
+    // synchronized so a line is never interleaved with another thread's --
+    // see the note on the listener methods above.
+    private synchronized void emit(String line) {
         out.print(line);
         out.print('\n');
         out.flush();

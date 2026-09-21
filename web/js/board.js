@@ -133,6 +133,10 @@ export class BoardView {
     ctx.fill();
 
     let animating = false;
+    // Filled in as each tile is drawn, then walked again below to find edges
+    // whose two touching sides disagree -- which only edge slipping can
+    // produce, since an ordinary search never places a mismatch.
+    const sidesByCell = new Array(this.cells).fill(null);
 
     for (let cell = 0; cell < this.cells; cell++) {
       const row = Math.floor(cell / this.n);
@@ -151,6 +155,7 @@ export class BoardView {
       const base = this.pieces[pieceId];
       if (!base) { drawEmpty(ctx, x, y, this.tile, this.dpr); continue; }
       const sides = rotatedSides(base, rot);
+      sidesByCell[cell] = sides;
       const imgEntry = this.images.get(`${pieceId + 1}_${rot}`);
       const img = imgEntry && imgEntry.status === 'ready' ? imgEntry.img : null;
 
@@ -194,6 +199,8 @@ export class BoardView {
       }
     }
 
+    this._drawBrokenEdges(sidesByCell);
+
     // the cell placed most recently in a replay
     if (this.highlight >= 0 && this.highlight < this.cells) {
       const row = Math.floor(this.highlight / this.n);
@@ -211,6 +218,104 @@ export class BoardView {
     }
 
     return animating;
+  }
+
+  /**
+   * Flag every shared edge whose two facing colours disagree. Edge slipping is
+   * the only thing that can produce one -- an exact search never places a
+   * mismatch -- so this is computed straight from the board's own colours
+   * rather than passed in, and works the same in LIVE and REPLAY.
+   *
+   * A thin seam line was too easy to lose in a busy 16x16 board, so a
+   * mismatch now gets three layered marks: the two actual triangles that
+   * don't agree are tinted red (the "wrong sides" themselves, not just the
+   * line between them), the seam gets a dark halo plus a bright glowing
+   * stroke so it reads against every tile colour including reds and pinks,
+   * and a white-cored dot sits at its midpoint so a single short seam still
+   * catches the eye when the board is zoomed out.
+   */
+  _drawBrokenEdges(sidesByCell) {
+    const segments = [];
+    for (let cell = 0; cell < this.cells; cell++) {
+      const sides = sidesByCell[cell];
+      if (!sides) continue;
+      const row = Math.floor(cell / this.n);
+      const col = cell - row * this.n;
+      const x = this.pad + col * this.tile;
+      const y = this.pad + row * this.tile;
+
+      if (col < this.n - 1) {
+        const east = sidesByCell[cell + 1];
+        if (east && sides[2] !== east[0]) {
+          segments.push({ x1: x + this.tile, y1: y, x2: x + this.tile, y2: y + this.tile,
+                          cellA: cell, sideA: 2, cellB: cell + 1, sideB: 0 });
+        }
+      }
+      if (row < this.n - 1) {
+        const south = sidesByCell[cell + this.n];
+        if (south && sides[3] !== south[1]) {
+          segments.push({ x1: x, y1: y + this.tile, x2: x + this.tile, y2: y + this.tile,
+                          cellA: cell, sideA: 3, cellB: cell + this.n, sideB: 1 });
+        }
+      }
+    }
+    if (!segments.length) return;
+
+    const { ctx } = this;
+    for (const s of segments) {
+      this._tintSide(s.cellA, s.sideA);
+      this._tintSide(s.cellB, s.sideB);
+    }
+
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(8,4,10,0.92)';
+    ctx.lineWidth = 8 * this.dpr;
+    ctx.beginPath();
+    for (const s of segments) { ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); }
+    ctx.stroke();
+
+    ctx.strokeStyle = '#ff2d4d';
+    ctx.lineWidth = 4.5 * this.dpr;
+    ctx.shadowColor = 'rgba(255,45,77,0.95)';
+    ctx.shadowBlur = 12 * this.dpr;
+    ctx.beginPath();
+    for (const s of segments) { ctx.moveTo(s.x1, s.y1); ctx.lineTo(s.x2, s.y2); }
+    ctx.stroke();
+
+    ctx.shadowBlur = 0;
+    for (const s of segments) {
+      const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
+      ctx.beginPath();
+      ctx.arc(mx, my, 4.2 * this.dpr, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.lineWidth = 2 * this.dpr;
+      ctx.strokeStyle = '#ff2d4d';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  /** Tint the one triangle at `side` (0=left, 1=top, 2=right, 3=bottom) of `cell`. */
+  _tintSide(cell, side) {
+    const row = Math.floor(cell / this.n);
+    const col = cell - row * this.n;
+    const x = this.pad + col * this.tile;
+    const y = this.pad + row * this.tile;
+    const x1 = x + this.tile, y1 = y + this.tile;
+    const cx = x + this.tile / 2, cy = y + this.tile / 2;
+    const { ctx } = this;
+    ctx.save();
+    ctx.beginPath();
+    if (side === 1) { ctx.moveTo(x, y); ctx.lineTo(x1, y); ctx.lineTo(cx, cy); }
+    else if (side === 2) { ctx.moveTo(x1, y); ctx.lineTo(x1, y1); ctx.lineTo(cx, cy); }
+    else if (side === 3) { ctx.moveTo(x1, y1); ctx.lineTo(x, y1); ctx.lineTo(cx, cy); }
+    else { ctx.moveTo(x, y1); ctx.lineTo(x, y); ctx.lineTo(cx, cy); }
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,45,77,0.55)';
+    ctx.fill();
+    ctx.restore();
   }
 }
 

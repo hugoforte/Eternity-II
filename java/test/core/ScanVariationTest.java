@@ -52,11 +52,19 @@ public final class ScanVariationTest {
         ScanSolver first = run(a, 300000L);
         ScanSolver second = run(b, 300000L);
 
-        T.check("neither is seeded with the order left alone",
+        T.check("neither reports itself seeded with valueOrder and shuffleStrength left alone",
                 !first.seeded() && !second.seeded());
-        T.eq("the seed alone does not change how many nodes are expanded",
-             first.nodes, second.nodes);
-        T.eqIntArray("nor the board that is reached", first.bestBoard, second.bestBoard);
+
+        // This assertion used to read "the seed alone changes nothing", which was
+        // true of this side alone.  Upstream's shuffleRuns makes the seed alone
+        // reorder each key's candidate run, and that is deliberate: it is what
+        // gives every PortfolioSearch worker a different descent from the same
+        // configuration.  So two seeds must now differ, and the reproducibility
+        // this file also asserts is anchored on a fixed seed rather than on the
+        // seed being ignored.
+        T.check("the seed alone now changes the descent, which is what a portfolio needs",
+                !java.util.Arrays.equals(first.bestBoard, second.bestBoard)
+                        || first.nodes != second.nodes);
     }
 
     // --------------------------------------------------------------- reproducible
