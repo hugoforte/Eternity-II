@@ -8,6 +8,7 @@ package core;
  *   java -cp out core.Bench eternity 15 # 15s each on the real puzzle
  *   java -cp out core.Bench engines 20  # MrvSolver vs ScanSolver, 20s each
  *   java -cp out core.Bench budget 20000000  # the same, at equal node count
+ *   java -cp out core.Bench slip        # edge slipping off vs on, equal nodes
  *   java -cp out core.Bench order       # fill-order frontiers, no search
  *
  * Several different questions are measured, because they have different
@@ -27,6 +28,11 @@ package core;
  *
  *  4. "order": the structural measures from {@link FillOrder}, which predict
  *     order quality without running a search at all.
+ *
+ *  5. "slip": ScanSolver against itself with edge slipping off and on, at
+ *     equal node counts.  Slipping buys depth at some cost in throughput, and
+ *     both halves of that trade have to be shown for the result to mean
+ *     anything, so nodes/sec is reported alongside the score.
  */
 public final class Bench {
 
@@ -40,6 +46,12 @@ public final class Bench {
         if (which.equals("all") || which.equals("solvable")) solvableBenchmark();
         if (which.equals("all") || which.equals("eternity")) eternityBenchmark(seconds);
         if (which.equals("all") || which.equals("engines")) engineBenchmark(seconds);
+        if (which.equals("slip")) {
+            if (args.length > 1) slipBenchmark(new long[] { parseLong(args[1], 20000000L) });
+            else slipBenchmark(new long[] { 5000000L, 20000000L, 100000000L });
+        } else if (which.equals("all")) {
+            slipBenchmark(new long[] { 20000000L });
+        }
         if (which.equals("budget")) {
             long budget = (args.length > 1) ? parseLong(args[1], 20000000L) : 20000000L;
             budgetBenchmark(budget);
@@ -131,6 +143,46 @@ public final class Bench {
         scan.solve();
         long ms1 = (System.nanoTime() - t1) / 1000000L;
         reportEngine("ScanSolver", scan.nodes, ms1, scan.bestPlaced, scan.bestMatchedEdges);
+        System.out.println();
+    }
+
+    // ---------------------------------------------------------- edge slipping
+
+    /**
+     * What edge slipping is worth on the real puzzle.  An exact search cannot
+     * score above the best perfect prefix it reaches, so the question is not
+     * whether slipping goes further -- it must -- but whether it goes far
+     * enough to pay for the throughput it costs.
+     */
+    private static void slipBenchmark(long[] budgets) {
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: edge slipping off vs on, equal nodes");
+        System.out.println("=================================================================");
+        System.out.println(" budget      schedule    ms      nodes/sec    placed   edges  breaks");
+
+        int[] schedules = { SolverConfig.SLIP_NONE, SolverConfig.SLIP_BLACKWOOD,
+                            SolverConfig.SLIP_VERHAARD };
+        for (int b = 0; b < budgets.length; b++) {
+            for (int i = 0; i < schedules.length; i++) {
+                SolverConfig cfg = new SolverConfig();
+                cfg.slipSchedule = schedules[i];
+                ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+                s.maxNodes = budgets[b];
+                long t0 = System.nanoTime();
+                s.solve();
+                long ms = (System.nanoTime() - t0) / 1000000L;
+                System.out.println(" " + pad("" + budgets[b], 11)
+                    + " " + pad(SolverConfig.slipScheduleName(schedules[i]), 11)
+                    + " " + pad("" + ms, 7)
+                    + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+                    + " " + pad(s.bestPlaced + "/256", 8)
+                    + " " + pad(s.bestMatchedEdges + "/480", 7)
+                    + " " + s.bestBreaks);
+                String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
+                                                       false, s.bestBreaks);
+                if (err != null) System.out.println("   INVALID BOARD: " + err);
+            }
+        }
         System.out.println();
     }
 

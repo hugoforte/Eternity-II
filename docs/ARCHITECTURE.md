@@ -55,7 +55,7 @@ eternity2-lab/
 │   │   ├── Bench.java         benchmarks
 │   │   └── Puzzle.java        the original frame-by-frame prototype (historical reference)
 │   ├── src/app/Engine.java    the JSONL streaming wrapper
-│   ├── test/core/             the solver test suite (1069 checks)
+│   ├── test/core/             the solver test suite (1119 checks)
 │   └── classes/               build output
 ├── server/
 │   ├── app.py           HTTP + SSE server
@@ -84,9 +84,9 @@ One attempt = one `app.Engine` process. Configuration arrives as
 |---|---|---|
 | `meta` | once, at startup | `n`, `cells`, `variants`, `colours`, `pieces` (all 256 edge tuples), `fixed`, `config` |
 | `frame` | ~9×/second | `ms`, `nodes`, `nps`, `placed`, `best`, `restarts`, `board` |
-| `best` | whenever the record improves | `ms`, `nodes`, `placed`, `edges`, `board` |
+| `best` | whenever the record improves | `ms`, `nodes`, `placed`, `edges`, `breaks`, `board` |
 | `restart` | on each restart | `ms`, `nodes`, `index` |
-| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `edges`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
+| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `edges`, `breaks`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
 
 `board` is 256 integers, one per cell: `-1` for empty, otherwise
 `(pieceId << 2) | rotation`. The UI unpacks that and rotates the piece's edge
@@ -96,6 +96,11 @@ tuple to draw it.
 sides agree, out of the 480 the 16x16 board has (the grey rim is not scored).
 `Validator.matchedEdges` counts it, and the solver only does so when it records
 a new best board, so the search loop never pays for it.
+
+`breaks` is how many interior edges the engine mismatched on purpose. Only the fixed-scan engine's
+edge slipping ever reports more than zero, and a board with any is never `solved`: that word keeps
+meaning a validated 256-piece board scoring 480. The supervisor refuses a `solved` claim that
+arrives with breaks and writes the refusal to stderr, so the two layers have to agree.
 
 `order` is the payload that makes replay possible: the cells of the deepest board
 **in the order they were placed**, as `[cell, piece, rotation]` triples. The

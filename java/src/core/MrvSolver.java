@@ -848,6 +848,8 @@ public final class MrvSolver implements Search {
     public long nodes() { return nodes; }
     public int bestPlaced() { return bestPlaced; }
     public int bestMatchedEdges() { return bestMatchedEdges; }
+    /** Always 0: this engine only ever places a piece that matches on every side. */
+    public int bestBreaks() { return 0; }
     public int restarts() { return restarts; }
     public boolean aborted() { return aborted; }
     public int[] bestBoard() { return bestBoard; }

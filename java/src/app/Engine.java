@@ -26,14 +26,19 @@ import java.io.PrintWriter;
  *   {"type":"meta",  n, cells, variants, colours, pieces:[[l,t,r,b],..],
  *                    fixed:[[cell,piece,rot],..], config:{..}}
  *   {"type":"frame", ms, nodes, nps, placed, best, board:[variant|-1,..]}
- *   {"type":"best",  ms, nodes, placed, edges, board:[..]}
+ *   {"type":"best",  ms, nodes, placed, edges, breaks, board:[..]}
  *   {"type":"restart", ms, nodes, index}
- *   {"type":"end",   ms, nodes, nps, best, edges, solved, status, restarts,
+ *   {"type":"end",   ms, nodes, nps, best, edges, breaks, solved, status, restarts,
  *                    order:[[cell,piece,rot],..], samples:[[ms,nodes,best],..],
  *                    board:[..], valid:bool}
  *
  * "best" is the deepest board's piece count and "edges" its matched internal
  * edges, out of 480 -- the measure Eternity II results are quoted in.
+ *
+ * "breaks" is how many of that board's interior edges the engine mismatched on
+ * purpose, which edge slipping allows and every other mode leaves at 0.  A
+ * board with any breaks is never "solved": that word keeps meaning a validated
+ * 256-piece board scoring 480.
  *
  * With {@code --watchStdin=1}, writing "stop" to stdin (or closing it) makes the
  * engine wind down cleanly and still emit its "end" record, so the server never
@@ -171,6 +176,7 @@ public final class Engine implements SolveListener {
         sb.append(",\"nodes\":").append(s.nodes());
         sb.append(",\"placed\":").append(s.placedCount());
         sb.append(",\"edges\":").append(s.bestMatchedEdges());
+        sb.append(",\"breaks\":").append(s.bestBreaks());
         sb.append(",\"board\":");
         appendBoard(sb, s.boardSnapshot());
         sb.append('}');
@@ -241,7 +247,10 @@ public final class Engine implements SolveListener {
             valid = (err == null) ? "true" : "false";
             board = solver.solutionBoard();
         } else {
-            String err = Validator.validatePartial(inst, board, false);
+            // The engine says how many edges it broke on purpose, so validating
+            // against that number checks the claim rather than excusing it.
+            String err = Validator.validatePartial(inst, board, false,
+                                                   solver.bestBreaks());
             valid = (err == null) ? "true" : "false";
         }
 
@@ -252,6 +261,7 @@ public final class Engine implements SolveListener {
         sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (solver.nodes() * 1000L / elapsed));
         sb.append(",\"best\":").append(solver.bestPlaced());
         sb.append(",\"edges\":").append(Validator.matchedEdges(inst, board));
+        sb.append(",\"breaks\":").append(solver.bestBreaks());
         sb.append(",\"solved\":").append(solved);
         sb.append(",\"valid\":").append(valid);
         sb.append(",\"restarts\":").append(solver.restarts());

@@ -75,12 +75,43 @@ package core;
  * own depth rather than sixteen placements later.  The effect is exactly the
  * pre-placement {@link MrvSolver} does, expressed as table data.
  *
+ * ---------------------------------------------------------- edge slipping
+ *
+ * An exact search cannot score above whatever perfect prefix it reaches: once
+ * no piece fits the next cell it can only back up.  With {@code slipSchedule}
+ * set, the search may instead place a piece that deliberately mismatches ONE
+ * of its two known sides -- a "break" -- and carry the cost.  Four rules, all
+ * taken from the published engines:
+ *
+ *   - at most one break per placed piece, so a candidate that mismatches both
+ *     its left and its top is never offered;
+ *   - never a break involving a border colour, so every side facing off the
+ *     board stays GREY and the board stays legal apart from its interior
+ *     mismatches;
+ *   - a cumulative ceiling by depth, see {@link #breakCeilings}: the first
+ *     ~80% of the board must be perfect and the breaks are spent in the tail;
+ *   - perfect candidates first, so a cell that may not break this turn never
+ *     looks at a slipped candidate.
+ *
+ * The candidate index carries the slipped sets, so offering them is still two
+ * array reads.  A variant has exactly one left colour, so the buckets of one
+ * (class, top) row are disjoint and "any other non-grey left" is the whole row
+ * minus the exact bucket; reading down a column gives the same for the top.
+ * Each key's three runs -- perfect, left-broken, top-broken -- are stored back
+ * to back in {@link #keyWord} / {@link #keyMask}, delimited by
+ * {@code keyStart}, {@code keyPerfectEnd} and {@code keyLeftBreakEnd}.
+ *
+ * Slipping changes what a finished board means, and the engine is careful
+ * about it: a board completed with breaks is recorded as the best seen and the
+ * search carries on.  Only a board with no breaks is reported as a solution.
+ *
  * ------------------------------------------------------------------- config
  *
- * This engine reads {@code fillOrder}, {@code greyInteriorPruning} and
- * {@code nodeBudget} from its {@link SolverConfig} and nothing else: it has no
- * cell heuristic to tune, no value order and no randomness, so the remaining
- * settings belong to {@link MrvSolver}.
+ * This engine reads {@code fillOrder}, {@code slipSchedule},
+ * {@code greyInteriorPruning} and {@code nodeBudget} from its
+ * {@link SolverConfig} and nothing else: it has no cell heuristic to tune, no
+ * value order and no randomness, so the remaining settings belong to
+ * {@link MrvSolver}.
  */
 public final class ScanSolver implements Search {
 
@@ -90,6 +121,29 @@ public final class ScanSolver implements Search {
     private static final int SPEC_ANY = -1;
     /** A side that may be any colour except GREY. */
     private static final int SPEC_NON_GREY = -2;
+
+    /**
+     * Blackwood's published break ceiling, given as the depth by which each
+     * successive break becomes permissible: one by depth 201, two by 206, and
+     * so on to ten by 239.  Exactly ten entries, and copied verbatim -- a
+     * leave-one-out sweep of his engine made depth-248 runs about seventy
+     * times rarer for the loss of any single number, so this is not a place to
+     * tune.  His source contains no rule against two breaks being adjacent,
+     * despite the claim being widely repeated.
+     */
+    private static final int[] SCHEDULE_BLACKWOOD =
+        { 201, 206, 211, 216, 221, 225, 229, 233, 237, 239 };
+
+    /**
+     * Verhaard's ceiling, arrived at independently in a record-setting solver:
+     * the first 193 placements must be perfect and twelve breaks are spent
+     * over the last sixty cells.  The same shape, slightly more generous.
+     */
+    private static final int[] SCHEDULE_VERHAARD =
+        { 193, 202, 209, 214, 218, 222, 226, 229, 232, 235, 238, 240 };
+
+    /** The board the published schedules are quoted for. */
+    private static final int SCHEDULE_CELLS = 256;
 
     // ------------------------------------------------------------------ inputs
 
@@ -123,9 +177,20 @@ public final class ScanSolver implements Search {
 
     /** CSR over (class, colourKey): where that key's (word, mask) pairs start. */
     private final int[] keyStart;
+    /** Where a key's perfect run ends and its left-broken run begins. */
+    private final int[] keyPerfectEnd;
+    /** Where a key's left-broken run ends and its top-broken run begins. */
+    private final int[] keyLeftBreakEnd;
     private final int[] keyWord;
     private final long[] keyMask;
     private final int numClasses;
+
+    /** Depth -> the most broken edges the board may carry by then. */
+    private final int[] breakCeiling;
+    /** Depth -> internal edges joined up by the first {@code depth} placements. */
+    private final int[] checksBefore;
+    /** Whether the configured schedule lets this board slip at all. */
+    private final boolean slipping;
 
     /** Variant -> its exposed right colour; index numVariants is the GREY sentinel. */
     private final int[] sideR;
@@ -153,6 +218,8 @@ public final class ScanSolver implements Search {
     public int[] bestBoard;
     /** Matched internal edges of {@link #bestBoard}, out of 480 on Eternity II. */
     public int bestMatchedEdges;
+    /** Deliberately mismatched edges of {@link #bestBoard}; 0 without slipping. */
+    public int bestBreaks;
     public int[] solutionBoard;
     /** Cells of the deepest board, in the order they were placed. */
     public int[] bestOrderCells;
@@ -176,6 +243,9 @@ public final class ScanSolver implements Search {
         this.words = inst.words;
         this.numColours = inst.numColours;
         this.nodeBudget = cfg.nodeBudget;
+
+        this.breakCeiling = breakCeilings(cfg.slipSchedule, cells);
+        this.slipping = breakCeiling[cells] > 0;
 
         this.order = (cfg.fillOrder == SolverConfig.FILL_ROW_MAJOR)
                    ? FillOrder.rowMajor(n) : FillOrder.bandedScan(n);
@@ -280,24 +350,79 @@ public final class ScanSolver implements Search {
             }
         }
 
+        // --- slipped candidate tables ----------------------------------------
+        // Break on the left: keep the required top colour, take any other
+        // non-grey left colour.  A variant has exactly one left colour, so the
+        // buckets along a (class, top) row are disjoint and that set is the
+        // whole row minus the exact bucket.  Break on the top is the same read
+        // down a (class, left) column.  A candidate that mismatches both sides
+        // is in neither set, which is what limits a piece to one break.
+        long[] leftBits = new long[buckets * words];
+        long[] topBits = new long[buckets * words];
+        if (slipping) {
+            long[] row = new long[numClasses * numColours * words];
+            long[] col = new long[numClasses * numColours * words];
+            for (int k = 0; k < numClasses; k++) {
+                for (int t = 0; t < numColours; t++) {
+                    for (int l = 0; l < numColours; l++) {
+                        int b = (k * pairs + t * numColours + l) * words;
+                        if (l != GREY) {
+                            int r = (k * numColours + t) * words;
+                            for (int w = 0; w < words; w++) row[r + w] |= bits[b + w];
+                        }
+                        if (t != GREY) {
+                            int c = (k * numColours + l) * words;
+                            for (int w = 0; w < words; w++) col[c + w] |= bits[b + w];
+                        }
+                    }
+                }
+            }
+            for (int k = 0; k < numClasses; k++) {
+                for (int t = 0; t < numColours; t++) {
+                    for (int l = 0; l < numColours; l++) {
+                        int b = (k * pairs + t * numColours + l) * words;
+                        // A break never involves a border colour, so a key
+                        // that requires GREY offers nothing to slip: the
+                        // colour being abandoned faces off the board, and so
+                        // would any grey colour taken in its place.
+                        if (l != GREY) {
+                            int r = (k * numColours + t) * words;
+                            for (int w = 0; w < words; w++) {
+                                leftBits[b + w] = row[r + w] & ~bits[b + w];
+                            }
+                        }
+                        if (t != GREY) {
+                            int c = (k * numColours + l) * words;
+                            for (int w = 0; w < words; w++) {
+                                topBits[b + w] = col[c + w] & ~bits[b + w];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- one CSR, three runs per key, perfect candidates first -----------
         this.keyStart = new int[buckets + 1];
+        this.keyPerfectEnd = new int[buckets];
+        this.keyLeftBreakEnd = new int[buckets];
         int entries = 0;
         for (int b = 0; b < buckets; b++) {
             keyStart[b] = entries;
-            for (int w = 0; w < words; w++) if (bits[b * words + w] != 0L) entries++;
+            entries += liveWords(bits, b, words);
+            keyPerfectEnd[b] = entries;
+            entries += liveWords(leftBits, b, words);
+            keyLeftBreakEnd[b] = entries;
+            entries += liveWords(topBits, b, words);
         }
         keyStart[buckets] = entries;
         this.keyWord = new int[entries];
         this.keyMask = new long[entries];
         int at = 0;
         for (int b = 0; b < buckets; b++) {
-            for (int w = 0; w < words; w++) {
-                long m = bits[b * words + w];
-                if (m == 0L) continue;
-                keyWord[at] = w;
-                keyMask[at] = m;
-                at++;
-            }
+            at = appendRun(bits, b, words, at);
+            at = appendRun(leftBits, b, words, at);
+            at = appendRun(topBits, b, words, at);
         }
 
         // --- per-depth lookups ----------------------------------------------
@@ -314,9 +439,65 @@ public final class ScanSolver implements Search {
             classBase[d] = classOfCell[cell] * pairs;
         }
 
+        // Every internal edge is checked exactly once, when the cell south or
+        // east of it goes down, so how many are joined up is a constant per
+        // depth and a board's score is checksBefore[depth] - breaks.
+        this.checksBefore = new int[cells + 1];
+        for (int d = 0; d < cells; d++) {
+            checksBefore[d + 1] = checksBefore[d]
+                + ((northSlot[d] < cells) ? 1 : 0)
+                + ((westSlot[d] < cells) ? 1 : 0);
+        }
+
         this.avail = new long[words];
         this.chosen = new int[cells + 1];
         reset();
+    }
+
+    /** How many words of one bucket hold any candidate at all. */
+    private static int liveWords(long[] bits, int bucket, int words) {
+        int count = 0;
+        for (int w = 0; w < words; w++) if (bits[bucket * words + w] != 0L) count++;
+        return count;
+    }
+
+    /** Copy one bucket's live (word, mask) pairs into the index. */
+    private int appendRun(long[] bits, int bucket, int words, int at) {
+        for (int w = 0; w < words; w++) {
+            long m = bits[bucket * words + w];
+            if (m == 0L) continue;
+            keyWord[at] = w;
+            keyMask[at] = m;
+            at++;
+        }
+        return at;
+    }
+
+    /**
+     * Depth -> the most broken edges a board may carry by that depth.
+     *
+     * A schedule lists the depth at which each successive break becomes
+     * permissible, so the ceiling is how many of its entries that depth has
+     * passed.  The published depths are quoted for a 256-cell board and are
+     * scaled by {@code cells / 256} the same way {@link FillOrder} scales its
+     * phase sizes: the real puzzle gets the schedule verbatim, and every other
+     * board size gets the same shape.
+     */
+    private static int[] breakCeilings(int slipSchedule, int cells) {
+        int[] out = new int[cells + 1];
+        int[] schedule = scheduleFor(slipSchedule);
+        for (int i = 0; i < schedule.length; i++) {
+            int depth = (int) ((long) schedule[i] * cells / SCHEDULE_CELLS);
+            if (depth > cells) continue;
+            for (int d = depth; d <= cells; d++) out[d] = i + 1;
+        }
+        return out;
+    }
+
+    private static int[] scheduleFor(int slipSchedule) {
+        if (slipSchedule == SolverConfig.SLIP_BLACKWOOD) return SCHEDULE_BLACKWOOD;
+        if (slipSchedule == SolverConfig.SLIP_VERHAARD) return SCHEDULE_VERHAARD;
+        return new int[0];
     }
 
     /** Fold each fixed placement onto the canonical rotation with the same sides. */
@@ -398,6 +579,7 @@ public final class ScanSolver implements Search {
         placed = 0;
         bestPlaced = 0;
         bestMatchedEdges = 0;
+        bestBreaks = 0;
         aborted = false;
         bestBoard = null;
         solutionBoard = null;
@@ -417,12 +599,13 @@ public final class ScanSolver implements Search {
      */
     public long solve() {
         startNanos = System.nanoTime();
-        dfs(0);
+        dfs(0, 0);
         if (verbose) {
             long ms = elapsedMs();
             System.out.println("ScanSolver done: nodes=" + nodes
                 + " solutions=" + solutions
                 + " bestPlaced=" + bestPlaced + "/" + cells
+                + " bestBreaks=" + bestBreaks
                 + " aborted=" + aborted
                 + " ms=" + ms
                 + " nodes/s=" + (ms == 0 ? 0 : (nodes * 1000L / ms)));
@@ -430,19 +613,14 @@ public final class ScanSolver implements Search {
         return solutions;
     }
 
-    /** @return true when the caller should stop descending. */
-    private boolean dfs(int depth) {
-        if (depth == cells) {
-            solutions++;
-            placed = cells;
-            if (solutionBoard == null) solutionBoard = new int[cells];
-            for (int d = 0; d < cells; d++) solutionBoard[order[d]] = chosen[d];
-            bestPlaced = cells;
-            recordBest(cells);
-            if (listener != null) listener.onSolution(this);
-            if (verbose) System.out.println("solution #" + solutions + " at node " + nodes);
-            return stopAtFirstSolution;
-        }
+    /**
+     * Fill the cell at {@code depth}, given that the board so far carries
+     * {@code breaks} deliberately mismatched edges.
+     *
+     * @return true when the caller should stop descending.
+     */
+    private boolean dfs(int depth, int breaks) {
+        if (depth == cells) return complete(breaks);
 
         nodes++;
         placed = depth;
@@ -456,21 +634,51 @@ public final class ScanSolver implements Search {
             }
         }
 
-        if (depth > bestPlaced) {
+        // Deeper is the headline, but two boards of the same depth are told
+        // apart by their score, so a later one that spent fewer breaks
+        // getting here replaces the one on record.
+        if (depth > bestPlaced
+                || (depth == bestPlaced && checksBefore[depth] - breaks > bestMatchedEdges)) {
             bestPlaced = depth;
-            recordBest(depth);
+            recordBest(depth, breaks);
             if (listener != null) listener.onNewBest(this);
             if (verbose && (bestPlaced % 16 == 0 || bestPlaced > cells - 40)) {
                 System.out.println("  placed=" + bestPlaced + "/" + cells
+                    + " breaks=" + breaks
                     + " nodes=" + nodes + " ms=" + elapsedMs());
             }
         }
 
-        int key = classBase[depth]
-                + sideBScaled[chosen[northSlot[depth]]]
-                + sideR[chosen[westSlot[depth]]];
-        int end = keyStart[key + 1];
-        for (int i = keyStart[key]; i < end; i++) {
+        int topScaled = sideBScaled[chosen[northSlot[depth]]];
+        int left = sideR[chosen[westSlot[depth]]];
+        int key = classBase[depth] + topScaled + left;
+
+        // Perfect candidates first, so a cell that may not break this turn
+        // never looks at a slipped one.
+        if (descend(depth, breaks, keyStart[key], keyPerfectEnd[key])) return true;
+        if (breaks >= breakCeiling[depth]) return false;
+        // A side facing off the board requires GREY, and a break may not
+        // involve a border colour, so those two keys offer nothing to slip.
+        if (left != GREY
+                && descend(depth, breaks + 1, keyPerfectEnd[key], keyLeftBreakEnd[key])) {
+            return true;
+        }
+        if (topScaled != 0
+                && descend(depth, breaks + 1, keyLeftBreakEnd[key], keyStart[key + 1])) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Try every still-unused candidate in one run of (word, mask) pairs.
+     * {@code breaks} is what the child board carries, so a slipped run is
+     * passed one more than the perfect run is.
+     *
+     * @return true when the caller should stop descending.
+     */
+    private boolean descend(int depth, int breaks, int from, int to) {
+        for (int i = from; i < to; i++) {
             int w = keyWord[i];
             long live = avail[w];
             long bits = keyMask[i] & live;
@@ -480,7 +688,7 @@ public final class ScanSolver implements Search {
                 chosen[depth] = v;
                 // One AND clears all four rotations of the piece at once.
                 avail[w] = live & ~(0xFL << (v & 0x3C));
-                boolean stop = dfs(depth + 1);
+                boolean stop = dfs(depth + 1, breaks);
                 avail[w] = live;
                 if (stop) return true;
             }
@@ -488,8 +696,35 @@ public final class ScanSolver implements Search {
         return false;
     }
 
+    /**
+     * A board that reached the last cell.  Slipping may finish a board but it
+     * may never claim one: only a board with no broken edges counts as a
+     * solution, so a slipped board is recorded as the best seen and the search
+     * carries on looking for a perfect one.
+     */
+    private boolean complete(int breaks) {
+        placed = cells;
+        if (breaks > 0) {
+            if (cells > bestPlaced
+                    || checksBefore[cells] - breaks > bestMatchedEdges) {
+                bestPlaced = cells;
+                recordBest(cells, breaks);
+                if (listener != null) listener.onNewBest(this);
+            }
+            return false;
+        }
+        solutions++;
+        if (solutionBoard == null) solutionBoard = new int[cells];
+        for (int d = 0; d < cells; d++) solutionBoard[order[d]] = chosen[d];
+        bestPlaced = cells;
+        recordBest(cells, 0);
+        if (listener != null) listener.onSolution(this);
+        if (verbose) System.out.println("solution #" + solutions + " at node " + nodes);
+        return stopAtFirstSolution;
+    }
+
     /** Snapshot the board as it stands, its score, and the order it was built in. */
-    private void recordBest(int depth) {
+    private void recordBest(int depth, int breaks) {
         if (bestBoard == null) bestBoard = new int[cells];
         for (int cell = 0; cell < cells; cell++) bestBoard[cell] = -1;
         if (bestOrderCells == null) {
@@ -502,8 +737,10 @@ public final class ScanSolver implements Search {
             bestOrderVariants[d] = chosen[d];
         }
         bestOrderLength = depth;
-        // A board is recorded at most once per depth, so counting its edges
-        // here keeps the score out of the search loop entirely.
+        bestBreaks = breaks;
+        // A board is recorded rarely, so counting its edges here keeps the
+        // score out of the search loop entirely -- and it is counted by the
+        // independent Validator, not derived from the solver's own bookkeeping.
         bestMatchedEdges = Validator.matchedEdges(inst, bestBoard);
     }
 
@@ -518,6 +755,7 @@ public final class ScanSolver implements Search {
     public int placedCount() { return placed; }
     public int bestPlaced() { return bestPlaced; }
     public int bestMatchedEdges() { return bestMatchedEdges; }
+    public int bestBreaks() { return bestBreaks; }
     /** Always 0: this engine has no randomness, so restarting it changes nothing. */
     public int restarts() { return 0; }
     public boolean aborted() { return aborted; }
@@ -545,6 +783,23 @@ public final class ScanSolver implements Search {
 
     /** How many (word, mask) pairs the candidate index holds in total. */
     public int candidateEntryCount() { return keyWord.length; }
+
+    /** How many of those pairs hold candidates that match on both sides. */
+    public int perfectEntryCount() {
+        int count = 0;
+        for (int b = 0; b < keyPerfectEnd.length; b++) count += keyPerfectEnd[b] - keyStart[b];
+        return count;
+    }
+
+    /** Whether the configured schedule lets this board slip at all. */
+    public boolean slipping() { return slipping; }
+
+    /** Depth -> the most broken edges the board may carry by then. */
+    public int[] breakCeilings() {
+        int[] out = new int[breakCeiling.length];
+        System.arraycopy(breakCeiling, 0, out, 0, breakCeiling.length);
+        return out;
+    }
 
     /** How many distinct exposed-side classes the board needed. */
     public int classCount() { return numClasses; }
@@ -589,9 +844,12 @@ public final class ScanSolver implements Search {
      *
      *   java -cp out core.ScanSolver            # run until stopped
      *   java -cp out core.ScanSolver 50000000   # stop after 50M nodes
+     *   java -cp out core.ScanSolver 50000000 --slipSchedule=blackwood
      */
     public static void main(String[] args) {
-        ScanSolver s = new ScanSolver(Instance.eternity2());
+        SolverConfig cfg = new SolverConfig();
+        for (int i = 1; i < args.length; i++) cfg.applyArg(args[i]);
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
         s.verbose = true;
         s.stopAtFirstSolution = true;
         if (args.length > 0) {
@@ -610,9 +868,11 @@ public final class ScanSolver implements Search {
             System.out.println("no solution found; deepest board reached ("
                 + s.bestPlaced + "/" + s.cells + " pieces, "
                 + s.bestMatchedEdges + "/"
-                + Validator.internalEdgeTotal(s.inst) + " matched edges)");
+                + Validator.internalEdgeTotal(s.inst) + " matched edges, "
+                + s.bestBreaks + " broken)");
             if (s.bestBoard != null) {
-                String err = Validator.validatePartial(s.inst, s.bestBoard, false);
+                String err = Validator.validatePartial(s.inst, s.bestBoard, false,
+                                                       s.bestBreaks);
                 System.out.println("partial board validation: " + (err == null ? "OK" : err));
             }
         }

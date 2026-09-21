@@ -40,12 +40,35 @@ public final class Validator {
      */
     public static String validatePartial(Instance inst, int[] boardVariant,
                                          boolean requireAllPiecesUsed) {
+        return validatePartial(inst, boardVariant, requireAllPiecesUsed, 0);
+    }
+
+    /**
+     * Validate a possibly-incomplete board that is allowed to carry a known
+     * number of deliberately mismatched interior edges.
+     *
+     * {@link ScanSolver}'s edge slipping produces boards that break the
+     * matching rule on purpose but must still obey every other rule, and the
+     * engine promises exactly how many breaks it left.  Passing that promise
+     * in turns this into a check of the promise: a board with more mismatches
+     * than the caller expected is reported as an error, with both counts.
+     * Everything else -- piece reuse, border colours, fixed placements -- is
+     * judged exactly as strictly as before.
+     *
+     * @param allowedMismatches how many mismatched interior edges the caller
+     *                          expects; 0 demands a perfectly matched board.
+     */
+    public static String validatePartial(Instance inst, int[] boardVariant,
+                                         boolean requireAllPiecesUsed,
+                                         int allowedMismatches) {
         if (boardVariant == null) return "board is null";
         if (boardVariant.length != inst.cells) {
             return "board has " + boardVariant.length + " cells, expected " + inst.cells;
         }
         int n = inst.n;
         int[] useCount = new int[inst.numPieces];
+        int mismatches = 0;
+        String firstMismatch = null;
 
         for (int cell = 0; cell < inst.cells; cell++) {
             int v = boardVariant[cell];
@@ -87,8 +110,11 @@ public final class Validator {
                 if (nb >= 0) {
                     int q = inst.variantSides(nb >>> 2, nb & 3);
                     if (Sides.right(p) != Sides.left(q)) {
-                        return "cell " + cell + " right " + Sides.right(p)
-                             + " != cell " + (cell + 1) + " left " + Sides.left(q);
+                        mismatches++;
+                        if (firstMismatch == null) {
+                            firstMismatch = "cell " + cell + " right " + Sides.right(p)
+                                          + " != cell " + (cell + 1) + " left " + Sides.left(q);
+                        }
                     }
                 }
             }
@@ -98,11 +124,19 @@ public final class Validator {
                 if (nb >= 0) {
                     int q = inst.variantSides(nb >>> 2, nb & 3);
                     if (Sides.bottom(p) != Sides.top(q)) {
-                        return "cell " + cell + " bottom " + Sides.bottom(p)
-                             + " != cell " + (cell + n) + " top " + Sides.top(q);
+                        mismatches++;
+                        if (firstMismatch == null) {
+                            firstMismatch = "cell " + cell + " bottom " + Sides.bottom(p)
+                                          + " != cell " + (cell + n) + " top " + Sides.top(q);
+                        }
                     }
                 }
             }
+        }
+
+        if (mismatches > allowedMismatches) {
+            return mismatches + " mismatched edges, at most " + allowedMismatches
+                 + " allowed; first was " + firstMismatch;
         }
 
         if (requireAllPiecesUsed) {
