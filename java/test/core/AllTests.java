@@ -29,7 +29,9 @@ public final class AllTests {
         ScanSolverTest.run();
         ScanVariationTest.run();
         EdgeSlippingTest.run();
+        ColourQuotaTest.run();
         RepairTest.run();
+        RootScreenTest.run();
         CrossValidationTest.run();
 
         long ms = (System.nanoTime() - start) / 1000000L;
