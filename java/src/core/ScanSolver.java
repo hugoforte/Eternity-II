@@ -344,6 +344,11 @@ public final class ScanSolver implements Search {
     public int bestMatchedEdges;
     /** Deliberately mismatched edges of {@link #bestBoard}; 0 without slipping. */
     public int bestBreaks;
+    /**
+     * Tiles of {@link #bestBoard} placed before its first mismatched edge.
+     * Equal to {@link #bestPlaced} whenever {@link #bestBreaks} is 0.
+     */
+    public int bestPerfectTiles;
     public int[] solutionBoard;
     /** Cells of the deepest board, in the order they were placed. */
     public int[] bestOrderCells;
@@ -880,6 +885,7 @@ public final class ScanSolver implements Search {
         bestPlaced = 0;
         bestMatchedEdges = 0;
         bestBreaks = 0;
+        bestPerfectTiles = 0;
         aborted = false;
         restarts = 0;
         bestBoard = null;
@@ -1235,6 +1241,8 @@ public final class ScanSolver implements Search {
         // score out of the search loop entirely -- and it is counted by the
         // independent Validator, not derived from the solver's own bookkeeping.
         bestMatchedEdges = Validator.matchedEdges(inst, bestBoard);
+        bestPerfectTiles = Validator.perfectTiles(inst, bestOrderCells,
+                                                  bestOrderVariants, depth);
     }
 
     // ------------------------------------------------------------------ Search
@@ -1249,6 +1257,7 @@ public final class ScanSolver implements Search {
     public int bestPlaced() { return bestPlaced; }
     public int bestMatchedEdges() { return bestMatchedEdges; }
     public int bestBreaks() { return bestBreaks; }
+    public int bestPerfectTiles() { return bestPerfectTiles; }
     /** How many times the search started over; 0 unless the order is seeded. */
     public int restarts() { return restarts; }
     public boolean aborted() { return aborted; }

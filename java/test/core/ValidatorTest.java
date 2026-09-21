@@ -140,6 +140,42 @@ public final class ValidatorTest {
         catch (IllegalArgumentException e) { threwOnSize = true; }
         T.threw("counting the edges of a wrong-size board fails loudly", threwOnSize);
 
+        // --- the deepest error-free prefix ---------------------------------
+        // Tiles placed stops being a score once edge slipping is on: a board
+        // can be filled to every cell by paying enough breaks.  This is the
+        // companion measure that cannot be bought.
+        int[] naturalCells = new int[inst.cells];
+        int[] naturalVariants = new int[inst.cells];
+        for (int cell = 0; cell < inst.cells; cell++) {
+            naturalCells[cell] = cell;
+            naturalVariants[cell] = good[cell];
+        }
+        T.eq("a whole solution is error-free to its last tile",
+             inst.cells,
+             Validator.perfectTiles(inst, naturalCells, naturalVariants, inst.cells));
+
+        T.eq("no placements at all is an error-free prefix of zero",
+             0, Validator.perfectTiles(inst, naturalCells, naturalVariants, 0));
+
+        // Rotating the piece placed sixth mismatches it against the neighbours
+        // already down to its west and north, so the prefix ends there.
+        int[] rotatedVariants = copy(naturalVariants);
+        rotatedVariants[5] = (5 << 2) | 1;
+        T.eq("a prefix ends at the first tile that mismatches what is already down",
+             5,
+             Validator.perfectTiles(inst, naturalCells, rotatedVariants, inst.cells));
+
+        // A mismatch the prefix has not reached yet does not shorten it.
+        int[] lateVariants = copy(naturalVariants);
+        lateVariants[inst.cells - 1] = ((inst.cells - 1) << 2) | 1;
+        T.eq("a mismatch beyond the prefix under test leaves it whole",
+             5, Validator.perfectTiles(inst, naturalCells, lateVariants, 5));
+
+        boolean threwOnLength = false;
+        try { Validator.perfectTiles(inst, naturalCells, naturalVariants, inst.cells + 1); }
+        catch (IllegalArgumentException e) { threwOnLength = true; }
+        T.threw("an error-free prefix longer than the board fails loudly", threwOnLength);
+
         mismatchParityOnEternity2();
 
         T.endSection();

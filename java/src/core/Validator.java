@@ -209,6 +209,69 @@ public final class Validator {
         return matched;
     }
 
+    /**
+     * The deepest error-free prefix of a placement order: the largest k for
+     * which the first k placements carry no mismatched edge between them.
+     *
+     * Tiles placed stops being a score once edge slipping is on, because a
+     * board can be filled to every cell by paying enough breaks.  This is the
+     * companion measure that cannot be bought that way -- how far a search got
+     * before it had to mismatch anything.  Only mismatched edges end a prefix;
+     * a border side that is not grey is a different kind of broken board and
+     * {@link #validatePartial} is what judges it.
+     *
+     * @param orderCells    cells in the order they were placed
+     * @param orderVariants variants parallel to {@code orderCells}
+     * @param length        how many of those placements to consider
+     * @return the number of leading placements that are mutually consistent
+     */
+    public static int perfectTiles(Instance inst, int[] orderCells,
+                                   int[] orderVariants, int length) {
+        if (orderCells == null || orderVariants == null) {
+            throw new IllegalArgumentException("placement order is null");
+        }
+        if (length < 0 || length > inst.cells) {
+            throw new IllegalArgumentException("length " + length
+                + " is outside 0.." + inst.cells);
+        }
+        if (orderCells.length < length || orderVariants.length < length) {
+            throw new IllegalArgumentException("placement order is shorter than "
+                + length);
+        }
+        int n = inst.n;
+        int[] board = new int[inst.cells];
+        for (int cell = 0; cell < inst.cells; cell++) board[cell] = -1;
+        for (int d = 0; d < length; d++) {
+            int cell = orderCells[d];
+            int v = orderVariants[d];
+            int p = inst.variantSides(v >>> 2, v & 3);
+            int r = cell / n, c = cell - r * n;
+            if (c > 0 && board[cell - 1] >= 0
+                    && Sides.right(sidesAt(inst, board, cell - 1)) != Sides.left(p)) {
+                return d;
+            }
+            if (c < n - 1 && board[cell + 1] >= 0
+                    && Sides.right(p) != Sides.left(sidesAt(inst, board, cell + 1))) {
+                return d;
+            }
+            if (r > 0 && board[cell - n] >= 0
+                    && Sides.bottom(sidesAt(inst, board, cell - n)) != Sides.top(p)) {
+                return d;
+            }
+            if (r < n - 1 && board[cell + n] >= 0
+                    && Sides.bottom(p) != Sides.top(sidesAt(inst, board, cell + n))) {
+                return d;
+            }
+            board[cell] = v;
+        }
+        return length;
+    }
+
+    private static int sidesAt(Instance inst, int[] board, int cell) {
+        int v = board[cell];
+        return inst.variantSides(v >>> 2, v & 3);
+    }
+
     /** Internal edges of an n x n board: 2*n*(n-1), so 480 for Eternity II. */
     public static int internalEdgeTotal(Instance inst) {
         return 2 * inst.n * (inst.n - 1);

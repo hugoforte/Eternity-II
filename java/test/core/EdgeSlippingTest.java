@@ -39,8 +39,59 @@ public final class EdgeSlippingTest {
         itDoesNotChangeHowManySolutionsExist();
         itReachesFurtherThanTheExactSearch();
         itIsRepeatable();
+        itReportsTheDeepestErrorFreePrefix();
 
         T.endSection();
+    }
+
+    // -------------------------------------------------- error-free prefix
+
+    /**
+     * Tiles placed is not a score once slipping is on -- breaks buy depth, so
+     * a board can be filled by paying for it.  The deepest error-free prefix
+     * is the companion measure, and its two ends are what pin it down: with no
+     * schedule it is the whole board, and with one it cannot end before the
+     * schedule's first unlock, because nothing may break above that depth.
+     */
+    private static void itReportsTheDeepestErrorFreePrefix() {
+        SolverConfig exact = new SolverConfig();
+        ScanSolver clean = new ScanSolver(Instance.eternity2(), exact);
+        clean.maxNodes = 500000L;
+        clean.solve();
+        T.eq("with no schedule every tile placed is error-free",
+             clean.bestPlaced, clean.bestPerfectTiles);
+
+        SolverConfig cfg = new SolverConfig();
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+        s.maxNodes = 5000000L;
+        s.solve();
+
+        int[] ceilings = s.breakCeilings();
+        int firstUnlock = ceilings.length;
+        for (int d = 0; d < ceilings.length; d++) {
+            if (ceilings[d] > 0) { firstUnlock = d; break; }
+        }
+
+        T.check("a slipped board's error-free prefix stops short of its depth",
+                s.bestBreaks == 0
+                    ? s.bestPerfectTiles == s.bestPlaced
+                    : s.bestPerfectTiles < s.bestPlaced,
+                "placed=" + s.bestPlaced + " perfect=" + s.bestPerfectTiles
+                    + " breaks=" + s.bestBreaks);
+        T.check("and it cannot end before the schedule's first unlock",
+                s.bestBreaks == 0 || s.bestPerfectTiles >= firstUnlock,
+                "perfect=" + s.bestPerfectTiles + " firstUnlock=" + firstUnlock);
+
+        // The prefix is a real board, so it has to validate as one with no
+        // break allowance at all.
+        int[] prefix = new int[Instance.eternity2().cells];
+        for (int cell = 0; cell < prefix.length; cell++) prefix[cell] = -1;
+        for (int d = 0; d < s.bestPerfectTiles; d++) {
+            prefix[s.bestOrderCells()[d]] = s.bestOrderVariants()[d];
+        }
+        T.isNull("the prefix validates with no break allowance",
+                 Validator.validatePartial(Instance.eternity2(), prefix, false, 0));
     }
 
     // ------------------------------------------------------------------- off

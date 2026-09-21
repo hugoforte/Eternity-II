@@ -363,26 +363,55 @@ engine reaches in 60 s on one core, and the gap was edge slipping, which the nex
 
 ### Edge slipping, Eternity II, equal node budgets, single-threaded
 
-| budget | schedule | nodes/sec | pieces placed | matched edges | breaks |
-|---|---|---|---|---|---|
-| 5M | none | 44.2 M | 204 / 256 | 376 / 480 | 0 |
-| 5M | `blackwood` | 43.9 M | 226 / 256 | 414 / 480 | 6 |
-| 5M | `verhaard` | 37.9 M | 244 / 256 | 444 / 480 | 12 |
-| 20M | none | 48.3 M | 204 / 256 | 376 / 480 | 0 |
-| 20M | `blackwood` | 45.8 M | 226 / 256 | 414 / 480 | 6 |
-| 20M | `verhaard` | 43.0 M | 245 / 256 | 446 / 480 | 12 |
-| 100M | none | 48.1 M | 206 / 256 | 380 / 480 | 0 |
-| 100M | `blackwood` | 47.5 M | 235 / 256 | 430 / 480 | 8 |
-| 100M | `verhaard` | 45.4 M | 245 / 256 | 446 / 480 | 12 |
-| 1B | none | 48.2 M | 211 / 256 | 390 / 480 | 0 |
-| 1B | `blackwood` | 46.4 M | 241 / 256 | 440 / 480 | 10 |
-| 1B | `verhaard` | 44.4 M | **247 / 256** | **450 / 480** | 12 |
+| budget | schedule | nodes/sec | pieces placed | matched edges | error-free | breaks |
+|---|---|---|---|---|---|---|
+| 5M | none | 44.2 M | 204 / 256 | 376 / 480 | **204** | 0 |
+| 5M | `blackwood` | 43.9 M | 226 / 256 | 414 / 480 | 202 | 6 |
+| 5M | `verhaard` | 37.9 M | 244 / 256 | 444 / 480 | 193 | 12 |
+| 20M | none | 48.3 M | 204 / 256 | 376 / 480 | **204** | 0 |
+| 20M | `blackwood` | 45.8 M | 226 / 256 | 414 / 480 | 202 | 6 |
+| 20M | `verhaard` | 43.0 M | 245 / 256 | 446 / 480 | 197 | 12 |
+| 100M | none | 48.1 M | 206 / 256 | 380 / 480 | **206** | 0 |
+| 100M | `blackwood` | 47.5 M | 235 / 256 | 430 / 480 | 202 | 8 |
+| 100M | `verhaard` | 45.4 M | 245 / 256 | 446 / 480 | 197 | 12 |
+| 1B | none | 48.2 M | 211 / 256 | 390 / 480 | **211** | 0 |
+| 1B | `blackwood` | 46.4 M | 241 / 256 | 440 / 480 | 203 | 10 |
+| 1B | `verhaard` | 44.4 M | **247 / 256** | **450 / 480** | 196 | 12 |
+| 10B | none | 43.2 M | 213 / 256 | 394 / 480 | **213** | 0 |
+| 10B | `blackwood` | 44.3 M | 246 / 256 | 451 / 480 | 211 | 9 |
+| 10B | `verhaard` | 37.1 M | **249 / 256** | **454 / 480** | 209 | 12 |
 
 **This is by far the largest single improvement measured on this solver.** At an equal 20M nodes
 slipping is worth +38 matched edges over the exact search and at 1B nodes +60; the whole of the
 fixed-order engine was worth +22 over `MrvSolver` at the same budget. At 1B nodes — 22 seconds --
 the engine reaches 247 pieces / 450 edges, against the 248 pieces / 454 edges a published reference
 engine reaches in 60 seconds on one core.
+
+**The `error-free` column counts tiles placed before the board's first mismatched edge** —
+`Validator.perfectTiles`, walking the recorded placement order — so it is the part of the depth that
+was not bought with breaks. Pieces placed stops being a score the moment slipping is on, because a
+board can be filled to all 256 cells by paying enough of them; this is the companion number that
+cannot be bought that way.
+
+**The exact search has the deepest error-free board at every budget measured, and the margin
+collapses as the budget grows.** At 1B it is 211 against Blackwood's 203 and Verhaard's 196 — a gap
+of 8 and 15 tiles. At 10B it is 213 against 211 and 209, a gap of 2 and 4. Slipping does cost
+error-free depth, but most of that cost is a small-budget effect rather than a property of the
+schedules.
+
+**All three arms convert compute into error-free depth; the slipped ones just do it later.** From
+5M to 10B the exact search climbs 204 → 206 → 211 → 213, Blackwood's 202 → 202 → 203 → 211, and
+Verhaard's 193 → 197 → 196 → 209 — the last of those not even monotone below 1B, then +13 in the
+final decade. Anything read off the budgets up to 1B alone says the slipped arms are flat, and that
+is wrong.
+
+**Verhaard's first break unlocks at depth 193, and up to 1B its error-free prefix never gets far
+above it** — the engine was taking its first break at very nearly the first depth the schedule
+allowed. At 10B it no longer is. So that behaviour is a symptom of too small a budget for the
+schedule, not a fixed property of it, and what a refitted schedule would do has not been tested.
+
+By 10B the trade reads very differently from the way it does at 1B: Blackwood's schedule reaches 33
+tiles deeper overall for 2 tiles of error-free depth.
 
 **Slipping costs about 6% of throughput even when it is switched off**, because the search now reads
 a per-depth ceiling and compares it at every node: 50.4M nodes/sec before the change against 47.2M
@@ -538,16 +567,32 @@ because the lab can now settle it with its own data instead of this paragraph.
 The 600 s rows were taken by running with the node budget removed and stopping the search at ten
 minutes, which no single command does.
 
-| budget | quota | nodes/sec | pieces placed | matched edges |
-|---|---|---|---|---|
-| 100M | off | 41.2 M | 245 / 256 | 446 / 480 |
-| 100M | `14,22,5` | 31.8 M | **248 / 256** | **452 / 480** |
-| 1B | off | 39.6 M | 247 / 256 | 450 / 480 |
-| 1B | `14,22,5` | 27.6 M | **249 / 256** | **454 / 480** |
-| 10B | off | 39.5 M | 249 / 256 | 454 / 480 |
-| 10B | `14,22,5` | 27.1 M | **250 / 256** | **456 / 480** |
-| 600 s | off | 42.4 M | 249 / 256 | 454 / 480 |
-| 600 s | `14,22,5` | 27.3 M | **250 / 256** | **456 / 480** |
+| budget | quota | nodes/sec | pieces placed | matched edges | error-free |
+|---|---|---|---|---|---|
+| 100M | off | 41.2 M | 245 / 256 | 446 / 480 | 197 |
+| 100M | `14,22,5` | 31.8 M | **248 / 256** | **452 / 480** | 194 |
+| 1B | off | 39.6 M | 247 / 256 | 450 / 480 | 196 |
+| 1B | `14,22,5` | 27.6 M | **249 / 256** | **454 / 480** | 193 |
+| 10B | off | 39.5 M | 249 / 256 | 454 / 480 | 209 |
+| 10B | `14,22,5` | 27.1 M | **250 / 256** | **456 / 480** | 193 |
+| 600 s | off | 42.4 M | 249 / 256 | 454 / 480 | -- |
+| 600 s | `14,22,5` | 27.3 M | **250 / 256** | **456 / 480** | -- |
+
+The two time-budgeted rows carry no error-free figure: a wall-clock budget reaches a different
+depth on a different machine, so a number from it could not be reproduced by anyone reading this.
+
+**The gate costs error-free depth, and unlike the slip schedules it never earns any of it back.**
+Ungated against gated: 197 / 194 at 100M, 196 / 193 at 1B, and **209 / 193 at 10B**. The gated
+figure does not move at all across two decades of budget — it sits on 193, which is the exact depth
+Verhaard's schedule first permits a break — while the ungated arm climbs to 209. The gap widens
+from 3 tiles to 16.
+
+So the project's best board, 250 pieces and 456 edges, has the **shallowest error-free prefix of
+anything measured here**. The gate buys two matched edges over the ungated arm at 10B and gives up
+sixteen tiles of error-free depth for them. Whether that matters depends on what the board is for:
+nothing about a score board says the error-free prefix has to be deep. But it is the clearest
+statement yet that the gate is not making the search better in any general sense — it is buying a
+specific, narrow thing, and this column is what shows the price.
 
 **The gate is worth a piece and two edges at every budget measured, and it wins on wall-clock as well
 as on nodes.** That second half is not free: the gate costs about a third of the throughput, 27M
