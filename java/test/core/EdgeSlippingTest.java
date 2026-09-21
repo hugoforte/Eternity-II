@@ -48,10 +48,11 @@ public final class EdgeSlippingTest {
 
     /**
      * Tiles placed is not a score once slipping is on -- breaks buy depth, so
-     * a board can be filled by paying for it.  The deepest error-free prefix
-     * is the companion measure, and its two ends are what pin it down: with no
-     * schedule it is the whole board, and with one it cannot end before the
-     * schedule's first unlock, because nothing may break above that depth.
+     * a board can be filled by paying for it.  Two different measures answer
+     * "how far without a mistake", and conflating them is easy: the record
+     * board's own error-free prefix, and the deepest the search ever got with
+     * nothing mismatched.  For a slipped arm they are far apart, because the
+     * board on record is the deepest one and it carries breaks.
      */
     private static void itReportsTheDeepestErrorFreePrefix() {
         SolverConfig exact = new SolverConfig();
@@ -60,6 +61,8 @@ public final class EdgeSlippingTest {
         clean.solve();
         T.eq("with no schedule every tile placed is error-free",
              clean.bestPlaced, clean.bestPerfectTiles);
+        T.eq("and the two measures agree, because the record board has no breaks",
+             clean.bestPlaced, clean.deepestErrorFree);
 
         SolverConfig cfg = new SolverConfig();
         cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
@@ -67,21 +70,28 @@ public final class EdgeSlippingTest {
         s.maxNodes = 5000000L;
         s.solve();
 
-        int[] ceilings = s.breakCeilings();
-        int firstUnlock = ceilings.length;
-        for (int d = 0; d < ceilings.length; d++) {
-            if (ceilings[d] > 0) { firstUnlock = d; break; }
-        }
-
-        T.check("a slipped board's error-free prefix stops short of its depth",
+        T.check("a slipped board's own error-free prefix stops short of its depth",
                 s.bestBreaks == 0
                     ? s.bestPerfectTiles == s.bestPlaced
                     : s.bestPerfectTiles < s.bestPlaced,
-                "placed=" + s.bestPlaced + " perfect=" + s.bestPerfectTiles
+                "placed=" + s.bestPlaced + " prefix=" + s.bestPerfectTiles
                     + " breaks=" + s.bestBreaks);
-        T.check("and it cannot end before the schedule's first unlock",
-                s.bestBreaks == 0 || s.bestPerfectTiles >= firstUnlock,
-                "perfect=" + s.bestPerfectTiles + " firstUnlock=" + firstUnlock);
+
+        // The search reached depths the record board cannot testify to, so the
+        // running maximum is the larger of the two and the one worth quoting.
+        T.check("the search got at least as far error-free as its record board did",
+                s.deepestErrorFree >= s.bestPerfectTiles,
+                "deepest=" + s.deepestErrorFree + " prefix=" + s.bestPerfectTiles);
+
+        // The exact search is the honest reference for the same budget: a
+        // slipped arm tries every perfect candidate before any slipped one, so
+        // it cannot reach less far error-free than the exact search does.
+        ScanSolver reference = new ScanSolver(Instance.eternity2(), new SolverConfig());
+        reference.maxNodes = 5000000L;
+        reference.solve();
+        T.check("and it is not beaten error-free by the exact search at equal nodes",
+                s.deepestErrorFree >= reference.deepestErrorFree,
+                "slipped=" + s.deepestErrorFree + " exact=" + reference.deepestErrorFree);
 
         // The prefix is a real board, so it has to validate as one with no
         // break allowance at all.

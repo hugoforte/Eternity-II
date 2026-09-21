@@ -349,6 +349,17 @@ public final class ScanSolver implements Search {
      * Equal to {@link #bestPlaced} whenever {@link #bestBreaks} is 0.
      */
     public int bestPerfectTiles;
+    /**
+     * The deepest node the search ever reached with nothing mismatched yet --
+     * the most tiles it placed without buying any depth with a break.
+     *
+     * This is a maximum over the whole search, not a property of
+     * {@link #bestBoard}: a slipped arm's record board is deep and carries
+     * breaks, so {@link #bestPerfectTiles} describes that board and says
+     * nothing about how far the same search got error-free earlier on. The two
+     * coincide only when the record board has no breaks.
+     */
+    public int deepestErrorFree;
     public int[] solutionBoard;
     /** Cells of the deepest board, in the order they were placed. */
     public int[] bestOrderCells;
@@ -886,6 +897,7 @@ public final class ScanSolver implements Search {
         bestMatchedEdges = 0;
         bestBreaks = 0;
         bestPerfectTiles = 0;
+        deepestErrorFree = 0;
         aborted = false;
         restarts = 0;
         bestBoard = null;
@@ -1083,6 +1095,10 @@ public final class ScanSolver implements Search {
             }
         }
 
+        // Guarded on depth first: after warm-up that compare fails at nearly
+        // every node, so the breaks test is seldom reached at all.
+        if (depth > deepestErrorFree && breaks == 0) deepestErrorFree = depth;
+
         // Deeper is the headline, but two boards of the same depth are told
         // apart by their score, so a later one that spent fewer breaks
         // getting here replaces the one on record.
@@ -1258,6 +1274,7 @@ public final class ScanSolver implements Search {
     public int bestMatchedEdges() { return bestMatchedEdges; }
     public int bestBreaks() { return bestBreaks; }
     public int bestPerfectTiles() { return bestPerfectTiles; }
+    public int deepestErrorFree() { return deepestErrorFree; }
     /** How many times the search started over; 0 unless the order is seeded. */
     public int restarts() { return restarts; }
     public boolean aborted() { return aborted; }

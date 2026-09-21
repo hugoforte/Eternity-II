@@ -223,7 +223,7 @@ public final class Bench {
                     + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
                     + " " + pad(s.bestPlaced + "/256", 8)
                     + " " + pad(s.bestMatchedEdges + "/480", 7)
-                    + " " + pad(s.bestPerfectTiles + "/256", 8)
+                    + " " + pad(s.deepestErrorFree + "/256", 8)
                     + " " + s.bestBreaks);
                 String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
                                                        false, s.bestBreaks);
@@ -281,7 +281,7 @@ public final class Bench {
             + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
             + " " + pad(s.bestPlaced + "/256", 8)
             + " " + pad(s.bestMatchedEdges + "/480", 7)
-            + " " + pad(s.bestPerfectTiles + "/256", 8)
+            + " " + pad(s.deepestErrorFree + "/256", 8)
             + " " + s.bestBreaks);
         String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
                                                false, s.bestBreaks);
