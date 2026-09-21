@@ -39,8 +39,69 @@ public final class EdgeSlippingTest {
         itDoesNotChangeHowManySolutionsExist();
         itReachesFurtherThanTheExactSearch();
         itIsRepeatable();
+        itReportsTheDeepestErrorFreePrefix();
 
         T.endSection();
+    }
+
+    // -------------------------------------------------- error-free prefix
+
+    /**
+     * Tiles placed is not a score once slipping is on -- breaks buy depth, so
+     * a board can be filled by paying for it.  Two different measures answer
+     * "how far without a mistake", and conflating them is easy: the record
+     * board's own error-free prefix, and the deepest the search ever got with
+     * nothing mismatched.  For a slipped arm they are far apart, because the
+     * board on record is the deepest one and it carries breaks.
+     */
+    private static void itReportsTheDeepestErrorFreePrefix() {
+        SolverConfig exact = new SolverConfig();
+        ScanSolver clean = new ScanSolver(Instance.eternity2(), exact);
+        clean.maxNodes = 500000L;
+        clean.solve();
+        T.eq("with no schedule every tile placed is error-free",
+             clean.bestPlaced, clean.bestPerfectTiles);
+        T.eq("and the two measures agree, because the record board has no breaks",
+             clean.bestPlaced, clean.deepestErrorFree);
+
+        SolverConfig cfg = new SolverConfig();
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+        s.maxNodes = 5000000L;
+        s.solve();
+
+        T.check("a slipped board's own error-free prefix stops short of its depth",
+                s.bestBreaks == 0
+                    ? s.bestPerfectTiles == s.bestPlaced
+                    : s.bestPerfectTiles < s.bestPlaced,
+                "placed=" + s.bestPlaced + " prefix=" + s.bestPerfectTiles
+                    + " breaks=" + s.bestBreaks);
+
+        // The search reached depths the record board cannot testify to, so the
+        // running maximum is the larger of the two and the one worth quoting.
+        T.check("the search got at least as far error-free as its record board did",
+                s.deepestErrorFree >= s.bestPerfectTiles,
+                "deepest=" + s.deepestErrorFree + " prefix=" + s.bestPerfectTiles);
+
+        // The exact search is the honest reference for the same budget: a
+        // slipped arm tries every perfect candidate before any slipped one, so
+        // it cannot reach less far error-free than the exact search does.
+        ScanSolver reference = new ScanSolver(Instance.eternity2(), new SolverConfig());
+        reference.maxNodes = 5000000L;
+        reference.solve();
+        T.check("and it is not beaten error-free by the exact search at equal nodes",
+                s.deepestErrorFree >= reference.deepestErrorFree,
+                "slipped=" + s.deepestErrorFree + " exact=" + reference.deepestErrorFree);
+
+        // The prefix is a real board, so it has to validate as one with no
+        // break allowance at all.
+        int[] prefix = new int[Instance.eternity2().cells];
+        for (int cell = 0; cell < prefix.length; cell++) prefix[cell] = -1;
+        for (int d = 0; d < s.bestPerfectTiles; d++) {
+            prefix[s.bestOrderCells()[d]] = s.bestOrderVariants()[d];
+        }
+        T.isNull("the prefix validates with no break allowance",
+                 Validator.validatePartial(Instance.eternity2(), prefix, false, 0));
     }
 
     // ------------------------------------------------------------------- off

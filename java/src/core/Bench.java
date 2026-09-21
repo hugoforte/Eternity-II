@@ -204,7 +204,7 @@ public final class Bench {
         System.out.println("=================================================================");
         System.out.println(" ScanSolver on Eternity II: edge slipping off vs on, equal nodes");
         System.out.println("=================================================================");
-        System.out.println(" budget      schedule    ms      nodes/sec    placed   edges  breaks");
+        System.out.println(" budget      schedule    ms      nodes/sec    placed   edges   perfect  breaks");
 
         int[] schedules = { SolverConfig.SLIP_NONE, SolverConfig.SLIP_BLACKWOOD,
                             SolverConfig.SLIP_VERHAARD };
@@ -223,6 +223,7 @@ public final class Bench {
                     + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
                     + " " + pad(s.bestPlaced + "/256", 8)
                     + " " + pad(s.bestMatchedEdges + "/480", 7)
+                    + " " + pad(s.deepestErrorFree + "/256", 8)
                     + " " + s.bestBreaks);
                 String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
                                                        false, s.bestBreaks);
@@ -249,7 +250,7 @@ public final class Bench {
         System.out.println(" fillOrder=banded  slipSchedule=verhaard  quotaColours="
                            + BLACKWOOD_COLOURS);
         System.out.println("=================================================================");
-        System.out.println(" budget      quota   ms      nodes/sec    placed   edges  breaks");
+        System.out.println(" budget      quota   ms      nodes/sec    placed   edges   perfect  breaks");
 
         ScanSolver ungated = null;
         for (int b = 0; b < budgets.length; b++) {
@@ -280,6 +281,7 @@ public final class Bench {
             + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
             + " " + pad(s.bestPlaced + "/256", 8)
             + " " + pad(s.bestMatchedEdges + "/480", 7)
+            + " " + pad(s.deepestErrorFree + "/256", 8)
             + " " + s.bestBreaks);
         String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
                                                false, s.bestBreaks);
