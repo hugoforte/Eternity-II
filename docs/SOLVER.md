@@ -530,8 +530,11 @@ because the lab can now settle it with its own data instead of this paragraph.
 
 ### The colour quota, measured: what the right three colours are worth
 
-`fillOrder=banded`, `slipSchedule=verhaard`, single-threaded. Reproduce with
-`java -cp java/classes core.Bench quota 1000000000`.
+`fillOrder=banded`, `slipSchedule=verhaard`, single-threaded. The off/on pair at any node budget is
+`java -cp java/classes core.Bench quota <nodes>`; a single arm with any colours is
+`java -cp java/classes core.ScanSolver <nodes> --quotaSchedule=blackwood --quotaColours=13,16,10`.
+The 600 s rows were taken by running with the node budget removed and stopping the search at ten
+minutes, which no single command does.
 
 | budget | quota | nodes/sec | pieces placed | matched edges |
 |---|---|---|---|---|
@@ -591,21 +594,31 @@ that bound is the honest ceiling:
 The difference is the band from 56 to 76, where his three leave 12 to 13 sides of room and the
 substitutes leave 5 to 6. The stall was measured at depth 70 to 73 -- the middle of that band.
 
-**Which three colours, measured.** All 680 (one border, two interior) triples ranked by worst slack
-against that ceiling, then the extremes run at 1B nodes each:
+**Which three colours, measured.** `core.Bench colours` ranks all 680 (one border, two interior)
+triples by the least room the ramp ever leaves them, then runs the extremes of that ranking. 1B nodes
+each:
 
-| colours | rank by slack | worst slack | pieces placed | matched edges |
-|---|---|---|---|---|
-| `1,7,21` | 1 of 680 | 5 | 125 / 256 | 226 / 480 |
-| `14,7,21` | 4 of 680 | 5 | 111 / 256 | 199 / 480 |
-| `14,22,5` (Blackwood's own) | **461 of 680** | 3 | **249 / 256** | **454 / 480** |
-| `13,16,10` (his numbers read as ours) | 432 of 680 | 3 | 70 / 256 | 119 / 480 |
+| colours | worst slack | pieces placed | matched edges |
+|---|---|---|---|
+| `1,7,8` | 5 | 246 / 256 | 448 / 480 |
+| `1,7,9` | 5 | 58 / 256 | 96 / 480 |
+| `1,7,10` | 5 | **249 / 256** | **454 / 480** |
+| `14,22,5` (Blackwood's own, ranked 403rd) | 3 | **249 / 256** | **454 / 480** |
+| `2,19,21` (worst in the table) | −4 | 46 / 256 | 73 / 480 |
 
-**Slack is a filter, not an objective, and this is the sharpest statement of it available.** Twelve
-triples are negative, and for those the ramp really is unsatisfiable by any arrangement of pieces.
-Above that line the statistic stops predicting: the roomiest triple in the whole table places 125
-pieces where the 461st places 249. Blackwood chose his three for overlap -- three pieces carry all
-three of them -- and no cheap ranking recovers that. Reading the source was the only route.
+**Slack rules things out and predicts nothing.** Twenty-three triples are negative, and for those the
+ramp is unsatisfiable by any arrangement of pieces whatsoever -- that part of the ranking is sound and
+worth keeping. Above that line it stops carrying information: three triples with *identical* slack of
+5 land at 58, 246 and 249 pieces.
+
+**And Blackwood's three are not uniquely good.** `1,7,10`, picked by the ranking rather than from his
+source, matches them exactly at 249/454. That is worth knowing rather than disappointing: it is the
+same thing Bucas reports from the other end, that the two boards which reached 470 used *different*
+heuristic triples. The triple is a parameter to vary, not a secret to recover.
+
+What reading the source did settle is the ramp itself. It is satisfiable, the previous round's
+"unsatisfiable by any triple" conclusion was an artefact of three wrong colours, and the gate is worth
+a piece and two edges once it is pointed at colours it can be satisfied by.
 
 **The gate stays off by default**, and that has not changed. It abandons subtrees that may hold
 solutions, so the default engine stays complete and `CrossValidationTest` keeps exercising it.

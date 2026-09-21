@@ -104,15 +104,15 @@ Default: **Never** (`none`)
 
 `quotaColours` &middot; choice &middot; learned automatically
 
-Which three colours the quota counts: one border colour and two interior ones. Blackwood chose his for their overlap, and no cheap statistic picks them out -- they came from reading his source.
+Which three colours the quota counts: one border colour and two interior ones. Slack rules out the triples no arrangement of pieces could satisfy; above that line it does not rank them, so these are the measured ones.
 
 Only has an effect when Colour quota is **Blackwood**.
 
 | Choice | What it does |
 |---|---|
 | **Blackwood's** | His own three, carried across from his piece table's numbering into ours. Three pieces carry all three of them, which is the overlap he picked them for. |
-| **Most room** | The roomiest of all 680 triples once the ramp is measured against the cells the fill order has actually reached. Roomier than Blackwood's own three, and far worse: 125 pieces against his 249. |
-| **Most room, his border colour** | The roomiest triple that keeps Blackwood's border colour, so only the two interior ones change. Worse again, at 111 pieces. |
+| **Most room** | Picked by the ranking rather than from his source, and it matches his exactly at 249 pieces. The triple is a parameter to vary, not a secret to recover. |
+| **Most room, the unlucky one** | Identical slack to the one above and 58 pieces instead of 249 -- the clearest evidence that slack rules triples out but does not rank them. |
 
 Default: **Blackwood's** (`14,22,5`)
 

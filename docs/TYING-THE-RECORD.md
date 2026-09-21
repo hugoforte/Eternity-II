@@ -187,10 +187,16 @@ A piece and two edges at every budget, on wall-clock as well as on nodes. The la
 run — eight cores, six hours, about 48 core-hours. The gated engine reaches the same board on **one
 core in six minutes**. That is roughly **500 times less work for the same board**.
 
-**And the sting: no cheap statistic would have found it.** Re-ranking all 680 candidate triples by
-how much room the ramp leaves them — measured properly, against the cells the fill order has actually
-reached by each depth — puts Blackwood's real triple **461st of 680**. The roomiest triples are not
-his, and his beats them. There was no substitute for reading the source.
+**And a caveat that came out of checking this properly.** Ranking all 680 candidate triples by how
+much room the ramp leaves them puts his three 403rd, and the ranking's own top pick, `1,7,10`, matches
+them exactly at 249/454. So his triple is not uniquely good, and the ranking is not useless either —
+it correctly rules out the 23 triples that no arrangement of pieces can satisfy, and says nothing at
+all above that line, where three triples with identical slack land at 58, 246 and 249 pieces.
+
+This lines up with the one thing Jef Bucas has published about his own 470: the two boards that
+reached it used **different** heuristic triples. The triple is a parameter worth varying, not a secret
+worth recovering. What reading the source recovered was the ramp — which is satisfiable, and was
+written off as impossible on the strength of three wrong colours.
 
 **What this does not do is move the 470 question.** It is an engine improvement in the mid-450s band,
 on a device that climbs a score function. Section 2 is still true.
