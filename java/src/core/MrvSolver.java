@@ -105,6 +105,8 @@ public final class MrvSolver {
     public boolean aborted;
     public int restarts;
     public int[] bestBoard;
+    /** Matched internal edges of {@link #bestBoard}, out of 480 on Eternity II. */
+    public int bestMatchedEdges;
     public int[] solutionBoard;
     /** Cells of the deepest board, in the order they were placed. */
     public int[] bestOrderCells;
@@ -218,6 +220,7 @@ public final class MrvSolver {
         nodes = 0;
         solutions = 0;
         bestPlaced = 0;
+        bestMatchedEdges = 0;
         aborted = false;
         restarts = 0;
         bestBoard = null;
@@ -657,10 +660,13 @@ public final class MrvSolver {
         return false;
     }
 
-    /** Snapshot the current board plus the order its pieces were placed. */
+    /** Snapshot the current board, its score, and the order it was placed in. */
     private void recordBest() {
         if (bestBoard == null) bestBoard = new int[cells];
         System.arraycopy(boardVariant, 0, bestBoard, 0, cells);
+        // A board is recorded at most once per depth, so counting its edges
+        // here keeps the score out of the search loop entirely.
+        bestMatchedEdges = Validator.matchedEdges(inst, bestBoard);
         if (bestOrderCells == null) {
             bestOrderCells = new int[cells];
             bestOrderVariants = new int[cells];
@@ -915,7 +921,9 @@ public final class MrvSolver {
             System.out.println("validation: " + (err == null ? "OK" : err));
         } else {
             System.out.println("no solution found; deepest board reached ("
-                + s.bestPlaced + "/" + s.cells + " pieces)");
+                + s.bestPlaced + "/" + s.cells + " pieces, "
+                + s.bestMatchedEdges + "/"
+                + Validator.internalEdgeTotal(s.inst) + " matched edges)");
             if (s.bestBoard != null) {
                 StringBuilder sb = new StringBuilder();
                 for (int r = 0; r < s.n; r++) {

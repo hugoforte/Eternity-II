@@ -210,8 +210,9 @@ Two layers, kept deliberately separate:
 
 **The tuner** runs in the background after every attempt. It treats each
 setting as an independent multi-armed bandit over its discrete choices,
-scores attempts by best depth (with a mild efficiency bonus and a large
-bonus for a real solve), and uses **UCB1** to pick the value for the next
+scores attempts by **matched edges out of 480** — the measure Eternity II
+results are quoted in — with a mild efficiency bonus and a large bonus for a
+real solve, and uses **UCB1** to pick the value for the next
 automatic attempt — so untried values get tried and promising ones get
 repeated. An occasional random nudge stops it settling too early.
 **Optimal settings** (the button and the UI defaults) is the greedy view of

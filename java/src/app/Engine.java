@@ -24,11 +24,14 @@ import java.io.PrintWriter;
  *   {"type":"meta",  n, cells, variants, colours, pieces:[[l,t,r,b],..],
  *                    fixed:[[cell,piece,rot],..], config:{..}}
  *   {"type":"frame", ms, nodes, nps, placed, best, board:[variant|-1,..]}
- *   {"type":"best",  ms, nodes, placed, board:[..]}
+ *   {"type":"best",  ms, nodes, placed, edges, board:[..]}
  *   {"type":"restart", ms, nodes, index}
- *   {"type":"end",   ms, nodes, nps, best, solved, status, restarts,
+ *   {"type":"end",   ms, nodes, nps, best, edges, solved, status, restarts,
  *                    order:[[cell,piece,rot],..], samples:[[ms,nodes,best],..],
  *                    board:[..], valid:bool}
+ *
+ * "best" is the deepest board's piece count and "edges" its matched internal
+ * edges, out of 480 -- the measure Eternity II results are quoted in.
  *
  * With {@code --watchStdin=1}, writing "stop" to stdin (or closing it) makes the
  * engine wind down cleanly and still emit its "end" record, so the server never
@@ -164,6 +167,7 @@ public final class Engine implements SolveListener {
         sb.append("{\"type\":\"best\",\"ms\":").append(ms());
         sb.append(",\"nodes\":").append(s.nodes);
         sb.append(",\"placed\":").append(s.placed);
+        sb.append(",\"edges\":").append(s.bestMatchedEdges);
         sb.append(",\"board\":");
         appendBoard(sb, s.boardSnapshot());
         sb.append('}');
@@ -238,6 +242,7 @@ public final class Engine implements SolveListener {
         sb.append(",\"nodes\":").append(solver.nodes);
         sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (solver.nodes * 1000L / elapsed));
         sb.append(",\"best\":").append(solver.bestPlaced);
+        sb.append(",\"edges\":").append(Validator.matchedEdges(inst, board));
         sb.append(",\"solved\":").append(solved);
         sb.append(",\"valid\":").append(valid);
         sb.append(",\"restarts\":").append(solver.restarts);

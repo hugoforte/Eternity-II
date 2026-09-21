@@ -25,18 +25,29 @@ from db import Db       # noqa: E402
 from lessons import LessonManager, LESSON_STREAK, RETIRE_STREAK   # noqa: E402
 
 
+def _plausible_edges(best_depth):
+    """A stand-in edge count for a board of that depth.
+
+    A compact region of d pieces joins up roughly 2d of the 480 internal
+    edges, and a full board joins all of them.
+    """
+    return min(2 * best_depth, 480)
+
+
 def _seed_attempt(db, *, config_overrides=None, best_depth=100,
-                  nodes=250000, restarts=0, samples=None, placements=None,
-                  status='budget', solved=False):
+                  matched_edges=None, nodes=250000, restarts=0, samples=None,
+                  placements=None, status='budget', solved=False):
     cfg = schema.defaults()
     if config_overrides:
         cfg.update(config_overrides)
+    if matched_edges is None:
+        matched_edges = _plausible_edges(best_depth)
     aid = db.start_attempt(cfg, False, "tuner")
     db.finish_attempt(
         aid, status=status, solved=solved, valid=True,
-        best_depth=best_depth, nodes=nodes, duration_ms=int(nodes / 250),
-        nodes_per_sec=250_000, restarts=restarts,
-        score=tuner_mod.score_attempt(best_depth, nodes,
+        best_depth=best_depth, matched_edges=matched_edges, nodes=nodes,
+        duration_ms=int(nodes / 250), nodes_per_sec=250_000, restarts=restarts,
+        score=tuner_mod.score_attempt(matched_edges, nodes,
                                       cfg.get('nodeBudget'), solved),
         order=placements or [], samples=samples or [])
     return aid

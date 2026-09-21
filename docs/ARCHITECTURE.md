@@ -81,13 +81,18 @@ One attempt = one `app.Engine` process. Configuration arrives as
 |---|---|---|
 | `meta` | once, at startup | `n`, `cells`, `variants`, `colours`, `pieces` (all 256 edge tuples), `fixed`, `config` |
 | `frame` | ~9×/second | `ms`, `nodes`, `nps`, `placed`, `best`, `restarts`, `board` |
-| `best` | whenever the record improves | `ms`, `nodes`, `placed`, `board` |
+| `best` | whenever the record improves | `ms`, `nodes`, `placed`, `edges`, `board` |
 | `restart` | on each restart | `ms`, `nodes`, `index` |
-| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
+| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `edges`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
 
 `board` is 256 integers, one per cell: `-1` for empty, otherwise
 `(pieceId << 2) | rotation`. The UI unpacks that and rotates the piece's edge
 tuple to draw it.
+
+`edges` is what the board actually scores: the internal adjacencies whose two
+sides agree, out of the 480 the 16x16 board has (the grey rim is not scored).
+`Validator.matchedEdges` counts it, and the solver only does so when it records
+a new best board, so the search loop never pays for it.
 
 `order` is the payload that makes replay possible: the cells of the deepest board
 **in the order they were placed**, as `[cell, piece, rotation]` triples. The
@@ -170,8 +175,8 @@ and safer than a pool.
 
 ```sql
 attempts(id, started_at, finished_at, status, solved, valid, best_depth,
-         nodes, duration_ms, nodes_per_sec, restarts, user_defined, source,
-         score, config_json)
+         matched_edges, nodes, duration_ms, nodes_per_sec, restarts,
+         user_defined, source, score, config_json)
 
 placements(attempt_id, seq, cell, piece, rot)      -- the replay timeline
 samples(attempt_id, seq, ms, nodes, best)          -- the progress chart
@@ -188,6 +193,11 @@ Two housekeeping rules keep the history honest:
 * Runs that never searched (`nodes = 0`) are deleted rather than displayed.
 * Runs the user cut short are stored with status `aborted` and excluded from
   learning, because their settings never got a fair budget.
+
+`matched_edges` is NULL on attempts recorded before the engine reported it. A
+depth cannot be converted into an edge count after the fact, so those rows are
+left out of the tuner's statistics rather than counted as a board that matched
+nothing. A file from an older version gains the column on open.
 
 ---
 
@@ -327,9 +337,9 @@ it guide future attempts.  Lives in `server/lessons.py`.
 The tuner owns exploration.  It does **not** take orders.  Every time it
 evaluates an arm for UCB1 selection it calls
 `LessonManager.bonus_for(setting, arm)`, which adds up to
-`BONUS_SCALE * confidence` pieces' worth of score to arms matching any
-active lesson.  That is meaningful (a typical effect size is only a couple
-of pieces) but not absolute, so:
+`BONUS_SCALE * confidence` edges' worth of score to arms matching any
+active lesson.  That is meaningful (a typical effect size is only a few
+edges) but not absolute, so:
 
 * If the lesson is *also* supported by the live mean score, the tuner will
   pick the endorsed value.
