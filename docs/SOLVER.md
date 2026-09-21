@@ -344,25 +344,67 @@ a share of the keys rather than a share of each key: the useful setting is a lig
 **A cheap second opinion needs no randomness at all.** `valueOrder=reverse` reaches 243/442 — a
 different descent for free, and a second deterministic configuration where there were four.
 
-### The same 20 seeds at 1B nodes, where sampling starts to stop paying
+### The same seeds at bigger budgets, where sampling stops paying and then costs
 
-`java -cp java/classes core.Bench seeds 20 1000000000 25`, about 22 seconds a seed:
+`java -cp java/classes core.Bench seeds 20 1000000000 25` — about 22 seconds a seed, and about
+3.6 minutes a seed at 10B.
 
-| budget | unseeded | seeds min / median / max | spread | best of 20 |
-|---|---|---|---|---|
-| 100M | 245 / 446 | 243 / 245 / 247 | 4 pieces, 8 edges | 247 / 450 |
-| 1B | 247 / 450 | 246 / 247 / 248 | **2 pieces, 4 edges** | **248 / 452** |
+| budget | seeds | unseeded | seeds min / median / max | spread | best of N | sampling is worth |
+|---|---|---|---|---|---|---|
+| 100M | 20 | 245 / 446 | 243 / 245 / 247 | 4 pieces | 247 / 450 | **+2 pieces, +4 edges** |
+| 1B | 20 | 247 / 450 | 246 / 247 / 248 | 2 pieces | 248 / 452 | +1 piece, +2 edges |
+| 1B | first 4 | 247 / 450 | 246 / 247 / 247 | 1 piece | 247 / 450 | nothing |
+| 10B | 4 | **249 / 454** | 247 / 248 / 248 | 1 piece | 248 / 452 | **−1 piece, −2 edges** |
 
-**The spread narrows as the budget grows, and that is the finding that decides how to spend a core.**
-Ten times the budget halved the distance between the luckiest seed and the unluckiest: the seeds are
-converging on the same place, so the marginal value of a second opinion falls the longer each opinion
-is allowed to think. At 100M the best of twenty is worth +2 pieces over the single run; at 1B it is
-worth +1. Best-of-N is real, and it is not a substitute for a longer run.
+**The spread narrows as the budget grows, and the advantage of sampling goes with it — and then
+turns negative.** Each tenfold increase in budget roughly halves the distance between the luckiest
+seed and the unluckiest, so the seeds converge on the same place and a second opinion is worth less
+the longer each opinion is allowed to think. At 100M the best of twenty beats the single run by two
+pieces; at 1B by one; at 10B the single run is ahead of all four seeds.
 
-Neither budget reaches the 249 pieces / 454 edges the lab has recorded from ten-minute attempts,
-which is roughly 26B nodes — about 26 times the largest budget measured here. **No claim is made
-about beating that number**, because it was not run at that budget; what is measured is that at
-equal budget, sampling beats the one descent, by a margin that shrinks as the budget rises.
+**And the number at 10B is the one the lab has been chasing.** The unseeded run reaches exactly 249
+pieces / 454 edges there, in 3.6 minutes on one core — the best this project has recorded, which was
+assumed to need a ten-minute attempt. No seed matched it. So the honest answer to "does best-of-N
+beat the deterministic 249/454" is **no, not at the budget where 249/454 happens**: sampling wins at
+small budgets, ties around 1B, and loses at 10B.
+
+Two things temper that. The 10B row is four seeds, not twenty, and the maximum of four draws is a
+much weaker statistic than the maximum of twenty — the 1B row shows the same effect, where the first
+four seeds only tie the single run that twenty seeds beat. And the whole table is single-threaded;
+what the lab actually has is eight cores, where the choice is not "sample or run long" but "eight
+seeds of 10B or one seed of 80B", and that has not been measured.
+
+**The useful conclusion is not that variation was a mistake.** It is that the natural candidate order
+is a strong order — strong enough to beat every seed once the search is given room — and that
+sampling on this engine is a way to buy depth cheaply at short budgets, not a way to go deeper than
+it can go. The lab now has the distribution and can price it.
+
+### Restarts, measured, are worth much less than the seed
+
+Six seeds at 100M nodes, `slipSchedule=verhaard`, `shuffleStrength=25`, varying only the policy:
+
+| restart policy | restarts over the six runs | pieces min / median / max |
+|---|---|---|
+| none | 0 | 243 / 245 / 247 |
+| `fixed`, `restartBase=10000000` | 54 | 243 / 245 / 247 |
+| `fixed`, `restartBase=25000000` | 18 | 244 / 245 / 247 |
+| `luby`, `restartBase=5000000` | 72 | 244 / 245 / 247 |
+
+Reproduce one cell with, for example:
+
+```sh
+java -cp java/classes core.ScanSolver 100000000 --slipSchedule=verhaard \
+  --shuffleStrength=25 --randomSeed=1 --restartPolicy=luby --restartBase=5000000
+```
+
+**The median and the best do not move at all; the worst improves by one piece.** That is consistent
+with the published guidance that the cutoff schedule barely matters, and it goes a step further: on
+this engine, *having* restarts barely matters either. The reason looks structural. Restarts are the
+standard cure for a heavy-tailed runtime, where a search occasionally buries itself in a subtree with
+no solution in it and needs to be dragged out. A slipping descent is not that shape — it always
+reaches about 245 and is never stuck — so there is no tail for a restart to cut. The policy is
+exposed anyway, because a restart is the only way to re-draw a seed inside a single attempt, and
+because the lab can now settle it with its own data instead of this paragraph.
 
 ### Fill orders, measured without running a search
 
