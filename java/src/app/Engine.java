@@ -72,6 +72,7 @@ public final class Engine implements SolveListener {
         long sampleEvery = 50000L;
         int frameMs = 100;
         boolean watchStdin = false;
+        boolean clues = false;
 
         for (int i = 0; i < args.length; i++) {
             String a = args[i];
@@ -79,6 +80,8 @@ public final class Engine implements SolveListener {
                 frameMs = parseIntSafe(a.substring(10), 100);
             } else if (a.startsWith("--sampleEveryNodes=")) {
                 sampleEvery = parseLongSafe(a.substring(19), 50000L);
+            } else if (a.startsWith("--clues=")) {
+                clues = a.substring(8).equals("all");
             } else if (a.startsWith("--watchStdin=")) {
                 watchStdin = a.substring(13).equals("1") || a.substring(13).equals("true");
             } else {
@@ -88,7 +91,7 @@ public final class Engine implements SolveListener {
 
         Engine e = new Engine();
         e.frameIntervalNanos = (long) frameMs * 1000000L;
-        e.run(cfg, sampleEvery, watchStdin);
+        e.run(cfg, sampleEvery, watchStdin, clues);
     }
 
     private static int parseIntSafe(String s, int dflt) {
@@ -100,9 +103,10 @@ public final class Engine implements SolveListener {
 
     // ------------------------------------------------------------------ run
 
-    private void run(SolverConfig cfg, long sampleEvery, boolean watchStdin) {
+    private void run(SolverConfig cfg, long sampleEvery, boolean watchStdin,
+                     boolean clues) {
         out = new PrintWriter(new OutputStreamWriter(System.out), false);
-        inst = Instance.eternity2();
+        inst = clues ? Instance.eternity2StrictCanonical() : Instance.eternity2();
         solver = (cfg.engine == SolverConfig.ENGINE_SCAN)
                ? (Search) new ScanSolver(inst, cfg)
                : (Search) new MrvSolver(inst, cfg);
