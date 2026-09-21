@@ -44,7 +44,10 @@ eternity2-lab/
 │   │   ├── Sides.java         packed side colours + rotation arithmetic
 │   │   ├── Instance.java      a puzzle instance (board, pieces, fixed placements)
 │   │   ├── SolverConfig.java  every tunable decision, with the old hard-coded values as defaults
-│   │   ├── MrvSolver.java     the solver: MRV ordering over a bitset piece pool
+│   │   ├── MrvSolver.java     engine 1: MRV ordering over a bitset piece pool
+│   │   ├── ScanSolver.java    engine 2: fixed fill order + two-colour candidate index
+│   │   ├── FillOrder.java     the fixed cell orders, and the measures that judge them
+│   │   ├── Search.java        what both engines expose to app.Engine and the lab
 │   │   ├── Solver.java        the earlier row-major solver, kept as a baseline
 │   │   ├── RefSolver.java     deliberately naive solver, used only to cross-check the fast one
 │   │   ├── Validator.java     independent board checker
@@ -52,7 +55,7 @@ eternity2-lab/
 │   │   ├── Bench.java         benchmarks
 │   │   └── Puzzle.java        the original frame-by-frame prototype (historical reference)
 │   ├── src/app/Engine.java    the JSONL streaming wrapper
-│   ├── test/core/             the solver test suite (958 checks)
+│   ├── test/core/             the solver test suite (1069 checks)
 │   └── classes/               build output
 ├── server/
 │   ├── app.py           HTTP + SSE server
@@ -239,7 +242,10 @@ One place:
 1. Add an entry to `SETTINGS` in `server/schema.py`. If the setting only
    reaches the search under some other setting's value, declare that with
    `activeWhen` so the learner ignores attempts it could not have changed.
-2. Handle the key in `SolverConfig.apply()` and use it in `MrvSolver`.
+2. Handle the key in `SolverConfig.apply()` and use it in the engine it
+   belongs to. If only one engine reads it, give it
+   `activeWhen: {"key": "engine", ...}` so the other engine's attempts are not
+   counted as evidence about it.
 3. `python3 server/gen_docs.py`.
 
 The control appears in the UI, the learner starts tuning it, it is stored with
