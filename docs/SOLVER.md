@@ -191,6 +191,13 @@ where the tree is most expensive, a mistake surfaces in at most 8 placements ins
 in under 5 instead of over 11. The same trade holds at every board size from 6 to 20, which the test suite
 asserts.
 
+**And the two orders have not yet been told apart by a search.** Run against Eternity II at an equal node
+budget, the banded order is ahead at 20M nodes (204 pieces / 376 edges against 202 / 375) and level at
+500M (207 / 382 against 207 / 385, the plain scan marginally ahead on edges). That is consistent with
+the structural measure rather than against it: the banded order only differs from a plain scan past
+depth 201, and 500M nodes gets to 207. Until the search routinely works deep in the bottom band there is
+nothing for the phases to improve, so `fillOrder` is exposed as a setting and left for the lab to settle.
+
 ### Time to first solution on solvable instances
 
 MRV vs lowest-index ordering **inside the same bitset machinery**, so only the heuristic differs.
