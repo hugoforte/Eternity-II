@@ -109,6 +109,10 @@ public final class SolverConfig {
      * can break at most one, a further placement is worth net +1 edge or
      * better, so a ceiling that forbids it costs score. This is the dial that
      * lets the tail spend more.
+     *
+     * Accepted up to 64 here; {@code server/schema.py} offers the tuner only
+     * 0-8, because the gain saturates around +4 and every arm past that is one
+     * the bandit would have to rule out for itself.
      */
     public int     tailBreakBonus      = 0;
     /** How many sides of {@link #quotaColours} must be spent by each depth. */

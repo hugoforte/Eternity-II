@@ -753,10 +753,14 @@ public final class ScanSolver implements Search {
         // The tail allowance rides on top of whatever the schedule permits.
         // Added as a constant from one depth onward, so the ceiling still only
         // ever rises -- a board is never asked to give a break back.
-        if (tailBreakBonus > 0) {
-            for (int d = Math.max(0, tailFromDepth); d <= cells; d++) {
-                out[d] += tailBreakBonus;
-            }
+        //
+        // Scaled like the published depths above, so every board size gets the
+        // same shape.  A depth at or past the last cell is dropped rather than
+        // written into out[cells]: dfs never reads that entry, but `slipping`
+        // does, and a search that can never slip must not build slipped tables.
+        int from = (int) ((long) tailFromDepth * cells / SCHEDULE_CELLS);
+        if (tailBreakBonus > 0 && from < cells) {
+            for (int d = Math.max(0, from); d <= cells; d++) out[d] += tailBreakBonus;
         }
         return out;
     }
@@ -1089,6 +1093,11 @@ public final class ScanSolver implements Search {
      * @return true when the caller should stop descending.
      */
     private boolean dfs(int depth, int breaks) {
+        // Ahead of the completion return, so a finished board with nothing
+        // mismatched reports every one of its cells.  Guarded on depth first:
+        // after warm-up that compare fails at nearly every node, so the breaks
+        // test is seldom reached at all.
+        if (depth > deepestErrorFree && breaks == 0) deepestErrorFree = depth;
         if (depth == cells) return complete(breaks);
 
         nodes++;
@@ -1104,10 +1113,6 @@ public final class ScanSolver implements Search {
                 listener.onSample(this);
             }
         }
-
-        // Guarded on depth first: after warm-up that compare fails at nearly
-        // every node, so the breaks test is seldom reached at all.
-        if (depth > deepestErrorFree && breaks == 0) deepestErrorFree = depth;
 
         // Deeper is the headline, but two boards of the same depth are told
         // apart by their score, so a later one that spent fewer breaks

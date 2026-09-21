@@ -112,6 +112,39 @@ public final class EdgeSlippingTest {
         T.eq("the validator finds exactly those broken edges",
              s.bestBreaks,
              Validator.mismatchedEdges(Instance.eternity2(), s.bestBoard).length / 2);
+
+        // A solved board has every one of its cells error-free, so the running
+        // maximum has to survive the completion return rather than stopping one
+        // short of it.
+        Instance small = Generator.generate(4, 3, 1234L, true, false);
+        ScanSolver solved = new ScanSolver(small, new SolverConfig());
+        solved.setStopAtFirstSolution(true);
+        solved.maxNodes = 2000000L;
+        solved.solve();
+        T.notNull("the 4x4 generated instance is solved", solved.solutionBoard());
+        T.eq("and every cell of a solved board counts as error-free",
+             small.cells, solved.deepestErrorFree);
+
+        // A tail depth at or past the last cell cannot let anything slip, so
+        // the engine must not build slipped tables for it.
+        SolverConfig inert = new SolverConfig();
+        inert.slipSchedule = SolverConfig.SLIP_NONE;
+        inert.tailFromDepth = 256;
+        inert.tailBreakBonus = 4;
+        ScanSolver none = new ScanSolver(Instance.eternity2(), inert);
+        T.eq("a tail starting past the last cell leaves the index perfect",
+             none.candidateEntryCount(), none.perfectEntryCount());
+
+        // The published depths scale with the board, and so must this one, or
+        // the dial is silently dead on every size but 16x16.
+        SolverConfig scaled = new SolverConfig();
+        scaled.slipSchedule = SolverConfig.SLIP_NONE;
+        scaled.tailFromDepth = 128;
+        scaled.tailBreakBonus = 1;
+        int[] ceil = new ScanSolver(small, scaled).breakCeilings();
+        T.eq("the tail depth scales to the board, so 128 of 256 is half of 16",
+             0, ceil[7]);
+        T.eq("and the allowance is live from there on", 1, ceil[8]);
     }
 
     // -------------------------------------------------- error-free prefix
