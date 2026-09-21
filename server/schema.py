@@ -18,6 +18,11 @@ group        UI grouping
 blurb        one-line explanation
 low/high     what happens at each extreme (shown under the slider)
 tunable      whether the learner is allowed to change it
+activeWhen   {'key', 'values'}: this setting only reaches the search when the
+             named setting holds one of those values.  A setting without it is
+             always active.  The learner credits a setting only for attempts it
+             could actually have influenced, so these have to match what
+             MrvSolver reads.
 """
 
 SETTINGS = [
@@ -47,6 +52,7 @@ SETTINGS = [
         "min": 1, "max": 64, "step": 1,
         "default": 4,
         "tunable": True,
+        "activeWhen": {"key": "cellOrder", "values": ["hybrid"]},
         "blurb": "Hybrid mode only: use most-constrained while the best square has at most this many choices.",
         "low": "1 = almost always sweep in order",
         "high": "64 = almost always most-constrained",
@@ -58,6 +64,7 @@ SETTINGS = [
         "group": "Search strategy",
         "default": "mostNeighbours",
         "tunable": True,
+        "activeWhen": {"key": "cellOrder", "values": ["mrv", "hybrid"]},
         "blurb": "Which square wins when several are equally constrained.",
         "options": [
             {"value": "mostNeighbours", "label": "Most neighbours",
@@ -187,6 +194,7 @@ SETTINGS = [
         "values": [1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
         "default": 100000,
         "tunable": True,
+        "activeWhen": {"key": "restartPolicy", "values": ["fixed", "geometric", "luby"]},
         "blurb": "Nodes in the first run before the first restart.",
         "low": "1k = restart constantly, never goes deep",
         "high": "5M = restarts almost never happen",
@@ -199,6 +207,7 @@ SETTINGS = [
         "min": 110, "max": 400, "step": 10,
         "default": 150,
         "tunable": True,
+        "activeWhen": {"key": "restartPolicy", "values": ["geometric"]},
         "blurb": "Geometric policy only: each run is this much longer than the last (percent).",
         "low": "110% = barely grows, many short runs",
         "high": "400% = runs get long very quickly",
@@ -270,6 +279,27 @@ def arms(setting):
 
 def tunable_settings():
     return [s for s in SETTINGS if s.get("tunable", True)]
+
+
+def is_active(key, config):
+    """Could this setting have changed what an attempt using ``config`` did?
+
+    A conditional setting (``activeWhen``) is dead weight unless the setting it
+    depends on holds one of the listed values: ``restartMultiplier`` never
+    reaches the search unless the policy is geometric, for example.  Crediting
+    an arm for attempts it could not influence is how noise gets promoted to a
+    conclusion, so every per-setting statistic asks this first.
+    """
+    setting = BY_KEY.get(key)
+    if setting is None:
+        raise KeyError("no such setting: %r" % (key,))
+    dependency = setting.get("activeWhen")
+    if dependency is None:
+        return True
+    # A config that omits the dependency ran with whatever the engine defaults
+    # to, which is what coerce() returns for a missing value.
+    actual = coerce(dependency["key"], (config or {}).get(dependency["key"]))
+    return actual in dependency["values"]
 
 
 def coerce(key, value):

@@ -16,7 +16,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS attempts (
     solved        INTEGER NOT NULL DEFAULT 0,
     valid         INTEGER NOT NULL DEFAULT 1,
     best_depth    INTEGER NOT NULL DEFAULT 0,
+    -- matched internal edges of the best board, out of 480; NULL on attempts
+    -- recorded before the engine reported it
+    matched_edges INTEGER,
     nodes         INTEGER NOT NULL DEFAULT 0,
     duration_ms   INTEGER NOT NULL DEFAULT 0,
     nodes_per_sec INTEGER NOT NULL DEFAULT 0,
@@ -148,6 +151,7 @@ class Db:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_DDL)
+            self._add_missing_columns()
             self._conn.commit()
         self.set_meta("schema_version", str(SCHEMA_VERSION))
         # Any attempt still marked running belongs to a previous process that
@@ -166,6 +170,20 @@ class Db:
                 "UPDATE attempts SET status='interrupted', finished_at=? "
                 "WHERE status='running'", (time.time(),))
             self._conn.commit()
+
+    def _add_missing_columns(self):
+        """Bring an older file up to the current schema.
+
+        Only additive changes are supported, which is all this application has
+        ever needed.  ``matched_edges`` stays NULL on rows written before the
+        engine reported it: a board's edge count cannot be recovered from its
+        depth, and calling it zero would tell the learner that those settings
+        produced the worst boards on record.
+        """
+        present = {row["name"] for row in
+                   self._conn.execute("PRAGMA table_info(attempts)")}
+        if "matched_edges" not in present:
+            self._conn.execute("ALTER TABLE attempts ADD COLUMN matched_edges INTEGER")
 
     def close(self):
         with self._lock:
@@ -199,16 +217,22 @@ class Db:
             return cur.lastrowid
 
     def finish_attempt(self, attempt_id, *, status, solved, valid, best_depth,
-                       nodes, duration_ms, nodes_per_sec, restarts, score,
-                       order, samples):
+                       matched_edges, nodes, duration_ms, nodes_per_sec,
+                       restarts, score, order, samples):
+        """Store the results of a finished attempt.
+
+        ``matched_edges`` is the score of the best board, or None when the
+        engine did not report one; see :meth:`_add_missing_columns`.
+        """
         now = time.time()
         with self._lock:
             self._conn.execute(
                 "UPDATE attempts SET finished_at=?, status=?, solved=?, valid=?, "
-                "best_depth=?, nodes=?, duration_ms=?, nodes_per_sec=?, restarts=?, "
-                "score=? WHERE id=?",
+                "best_depth=?, matched_edges=?, nodes=?, duration_ms=?, "
+                "nodes_per_sec=?, restarts=?, score=? WHERE id=?",
                 (now, status, 1 if solved else 0, 1 if valid else 0, best_depth,
-                 nodes, duration_ms, nodes_per_sec, restarts, score, attempt_id))
+                 matched_edges, nodes, duration_ms, nodes_per_sec, restarts,
+                 score, attempt_id))
             if order:
                 self._conn.executemany(
                     "INSERT OR REPLACE INTO placements(attempt_id,seq,cell,piece,rot) "
@@ -248,8 +272,9 @@ class Db:
     def attempt_summaries(self, limit=60, offset=0):
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id,started_at,finished_at,status,solved,valid,best_depth,nodes,"
-                "duration_ms,nodes_per_sec,restarts,user_defined,source,score,config_json "
+                "SELECT id,started_at,finished_at,status,solved,valid,best_depth,"
+                "matched_edges,nodes,duration_ms,nodes_per_sec,restarts,"
+                "user_defined,source,score,config_json "
                 "FROM attempts WHERE status != 'running' "
                 "ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
         return [self._summary(r) for r in rows]
@@ -291,6 +316,7 @@ class Db:
             "solved": bool(r["solved"]),
             "valid": bool(r["valid"]),
             "bestDepth": r["best_depth"],
+            "matchedEdges": r["matched_edges"],
             "nodes": r["nodes"],
             "durationMs": r["duration_ms"],
             "nodesPerSec": r["nodes_per_sec"],
@@ -309,8 +335,8 @@ class Db:
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id,best_depth,nodes,duration_ms,score,config_json,solved,"
-                "user_defined,restarts,status "
+                "SELECT id,best_depth,matched_edges,nodes,duration_ms,score,"
+                "config_json,solved,user_defined,restarts,status "
                 "FROM attempts "
                 # 'aborted' runs were cut short by the user, so they say nothing
                 # about how good their settings were. Only self-terminating runs
@@ -326,6 +352,7 @@ class Db:
             out.append({
                 "id": r["id"],
                 "bestDepth": r["best_depth"],
+                "matchedEdges": r["matched_edges"],
                 "nodes": r["nodes"],
                 "durationMs": r["duration_ms"],
                 "score": r["score"],

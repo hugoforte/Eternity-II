@@ -14,6 +14,7 @@ compiled classes or JVM are available.
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -98,6 +99,61 @@ class SchemaTest(unittest.TestCase):
             self.assertIn("=", arg)
         self.assertIn("--greyInteriorPruning=true", args)
 
+    def test_a_setting_with_no_dependency_is_always_active(self):
+        cfg = schema.defaults()
+        self.assertTrue(schema.is_active("cellOrder", cfg))
+        self.assertTrue(schema.is_active("nodeBudget", cfg))
+
+    def test_restart_growth_only_counts_under_the_geometric_policy(self):
+        # MrvSolver.restartBudget() reads restartMultiplier on the geometric
+        # branch and nowhere else.
+        for policy, active in (("geometric", True), ("fixed", False),
+                               ("luby", False), ("none", False)):
+            cfg = dict(schema.defaults(), restartPolicy=policy)
+            self.assertEqual(schema.is_active("restartMultiplier", cfg), active,
+                             "restartMultiplier under restartPolicy=%s" % policy)
+
+    def test_restart_interval_counts_under_every_policy_but_none(self):
+        for policy, active in (("geometric", True), ("fixed", True),
+                               ("luby", True), ("none", False)):
+            cfg = dict(schema.defaults(), restartPolicy=policy)
+            self.assertEqual(schema.is_active("restartBase", cfg), active,
+                             "restartBase under restartPolicy=%s" % policy)
+
+    def test_hybrid_switch_point_only_counts_for_the_hybrid_cell_order(self):
+        for order, active in (("hybrid", True), ("mrv", False), ("rowMajor", False)):
+            cfg = dict(schema.defaults(), cellOrder=order)
+            self.assertEqual(schema.is_active("hybridThreshold", cfg), active,
+                             "hybridThreshold under cellOrder=%s" % order)
+
+    def test_tie_breaker_does_not_count_for_a_row_by_row_sweep(self):
+        # A row-major sweep takes the first empty cell, so nothing ever ties.
+        for order, active in (("mrv", True), ("hybrid", True), ("rowMajor", False)):
+            cfg = dict(schema.defaults(), cellOrder=order)
+            self.assertEqual(schema.is_active("tieBreak", cfg), active,
+                             "tieBreak under cellOrder=%s" % order)
+
+    def test_a_missing_dependency_value_falls_back_to_its_default(self):
+        self.assertFalse(schema.is_active("restartMultiplier", {}))
+        self.assertTrue(schema.is_active("cellOrder", {}))
+
+    def test_unknown_settings_cannot_be_asked_about(self):
+        with self.assertRaises(KeyError):
+            schema.is_active("noSuchSetting", schema.defaults())
+
+    def test_every_dependency_names_a_real_setting_and_legal_values(self):
+        for setting in schema.SETTINGS:
+            dependency = setting.get("activeWhen")
+            if dependency is None:
+                continue
+            other = schema.BY_KEY.get(dependency["key"])
+            self.assertIsNotNone(other, "%s depends on an unknown setting"
+                                 % setting["key"])
+            for value in dependency["values"]:
+                self.assertIn(value, schema.arms(other),
+                              "%s depends on %s=%r, which is not one of its arms"
+                              % (setting["key"], other["key"], value))
+
     def test_same_config_ignores_the_seed(self):
         a = schema.defaults()
         b = schema.defaults()
@@ -121,8 +177,9 @@ class DbTest(unittest.TestCase):
 
     def _finish(self, attempt_id, **kw):
         payload = dict(status="budget", solved=False, valid=True, best_depth=100,
-                       nodes=1000, duration_ms=10, nodes_per_sec=100, restarts=0,
-                       score=100.0, order=[], samples=[])
+                       matched_edges=180, nodes=1000, duration_ms=10,
+                       nodes_per_sec=100, restarts=0, score=180.0,
+                       order=[], samples=[])
         payload.update(kw)
         self.db.finish_attempt(attempt_id, **payload)
 
@@ -139,6 +196,39 @@ class DbTest(unittest.TestCase):
         self.assertTrue(detail["userDefined"])
         self.assertEqual(detail["config"], cfg)
         self.assertEqual(detail["bestDepth"], 3)
+
+    def test_the_matched_edge_count_survives_a_round_trip(self):
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, matched_edges=340)
+        self.assertEqual(self.db.attempt_detail(aid)["matchedEdges"], 340)
+        self.assertEqual(self.db.attempt_summaries()[0]["matchedEdges"], 340)
+
+    def test_an_attempt_with_no_edge_count_reports_none_not_zero(self):
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, matched_edges=None)
+        self.assertIsNone(self.db.attempt_detail(aid)["matchedEdges"])
+        self.assertIsNone(
+            self.db.finished_attempts_for_learning()[0]["matchedEdges"])
+
+    def test_a_database_without_the_edge_column_is_upgraded_in_place(self):
+        path = os.path.join(self.dir, "t.sqlite")
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, best_depth=191)
+        self.db.close()
+
+        conn = sqlite3.connect(path)
+        conn.execute("ALTER TABLE attempts DROP COLUMN matched_edges")
+        conn.commit()
+        conn.close()
+
+        self.db = Db(path)
+        detail = self.db.attempt_detail(aid)
+        self.assertEqual(detail["bestDepth"], 191)
+        self.assertIsNone(detail["matchedEdges"],
+                          "an attempt from before edge scoring has no count")
 
     def test_running_attempts_are_hidden_until_finished(self):
         self.db.start_attempt(schema.defaults(), False, "tuner")
@@ -249,20 +339,26 @@ class DbTest(unittest.TestCase):
 
 class ScoreTest(unittest.TestCase):
 
-    def test_depth_dominates_efficiency(self):
-        deep_slow = tuner_mod.score_attempt(200, 1_000_000, 1_000_000, False)
-        shallow_fast = tuner_mod.score_attempt(199, 1, 1_000_000, False)
-        self.assertGreater(deep_slow, shallow_fast,
-                           "one extra piece must outrank any efficiency gain")
+    def test_matched_edges_dominate_efficiency(self):
+        joined_slow = tuner_mod.score_attempt(400, 1_000_000, 1_000_000, False)
+        loose_fast = tuner_mod.score_attempt(399, 1, 1_000_000, False)
+        self.assertGreater(joined_slow, loose_fast,
+                           "one extra edge must outrank any efficiency gain")
 
-    def test_cheaper_run_wins_at_equal_depth(self):
-        cheap = tuner_mod.score_attempt(150, 100_000, 1_000_000, False)
-        dear = tuner_mod.score_attempt(150, 1_000_000, 1_000_000, False)
+    def test_cheaper_run_wins_at_equal_edges(self):
+        cheap = tuner_mod.score_attempt(340, 100_000, 1_000_000, False)
+        dear = tuner_mod.score_attempt(340, 1_000_000, 1_000_000, False)
         self.assertGreater(cheap, dear)
 
     def test_solving_beats_everything(self):
         self.assertGreater(tuner_mod.score_attempt(0, 1, 1, True),
-                           tuner_mod.score_attempt(256, 1, 10 ** 9, False))
+                           tuner_mod.score_attempt(480, 1, 10 ** 9, False))
+
+    def test_an_attempt_with_no_edge_count_cannot_be_scored(self):
+        # Treating a missing count as zero would tell the bandit that whatever
+        # settings that attempt used produced the worst board on record.
+        with self.assertRaises(ValueError):
+            tuner_mod.score_attempt(None, 1000, 1_000_000, False)
 
 
 class TunerTest(unittest.TestCase):
@@ -276,17 +372,30 @@ class TunerTest(unittest.TestCase):
         self.db.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
-    def _attempt(self, overrides, depth, nodes=None, budget=1_000_000):
+    def _attempt(self, overrides, edges, nodes=None, budget=1_000_000,
+                 depth=128):
         cfg = schema.defaults()
         cfg["nodeBudget"] = budget
         cfg.update(overrides)
         if nodes is None:
             nodes = budget
         aid = self.db.start_attempt(cfg, False, "tuner")
-        score = tuner_mod.score_attempt(depth, nodes, cfg["nodeBudget"], False)
+        score = tuner_mod.score_attempt(edges, nodes, cfg["nodeBudget"], False)
         self.db.finish_attempt(aid, status="budget", solved=False, valid=True,
-                               best_depth=depth, nodes=nodes, duration_ms=100,
-                               nodes_per_sec=1000, restarts=0, score=score,
+                               best_depth=depth, matched_edges=edges, nodes=nodes,
+                               duration_ms=100, nodes_per_sec=1000, restarts=0,
+                               score=score, order=[], samples=[])
+
+    def _attempt_without_edge_count(self, overrides, depth):
+        """An attempt as the database held them before edge scoring."""
+        cfg = schema.defaults()
+        cfg["nodeBudget"] = 1_000_000
+        cfg.update(overrides)
+        aid = self.db.start_attempt(cfg, False, "tuner")
+        self.db.finish_attempt(aid, status="budget", solved=False, valid=True,
+                               best_depth=depth, matched_edges=None,
+                               nodes=1_000_000, duration_ms=100,
+                               nodes_per_sec=1000, restarts=0, score=0.0,
                                order=[], samples=[])
 
     def test_cold_start_uses_measured_defaults(self):
@@ -379,6 +488,46 @@ class TunerTest(unittest.TestCase):
     def test_suggest_varies_the_seed(self):
         seeds = {self.tuner.suggest()["randomSeed"] for _ in range(12)}
         self.assertGreater(len(seeds), 1)
+
+    def test_a_setting_that_could_not_act_collects_no_statistics(self):
+        """restartMultiplier is dead unless the policy is geometric."""
+        for multiplier in (110, 400):
+            for _ in range(4):
+                self._attempt({"restartPolicy": "none",
+                               "restartMultiplier": multiplier}, 200)
+        self.assertEqual(self.tuner.arm_stats()["restartMultiplier"], {})
+
+    def test_support_counts_only_the_attempts_a_setting_could_affect(self):
+        for _ in range(4):
+            self._attempt({"restartPolicy": "geometric",
+                           "restartMultiplier": 110}, 120)
+            self._attempt({"restartPolicy": "geometric",
+                           "restartMultiplier": 400}, 200)
+        # plenty of deep runs that restartMultiplier had no say in
+        for _ in range(20):
+            self._attempt({"restartPolicy": "none",
+                           "restartMultiplier": 400}, 250)
+
+        stats = self.tuner.arm_stats()["restartMultiplier"]
+        self.assertEqual(stats["400"]["n"], 4)
+        self.assertEqual(stats["110"]["n"], 4)
+
+        self.tuner.rebuild_insights()
+        insights = [i for i in self.db.load_insights()
+                    if i["setting"] == "restartMultiplier"]
+        self.assertEqual(len(insights), 1)
+        self.assertEqual(insights[0]["support"], 8)
+
+    def test_attempts_with_no_edge_count_are_left_out_of_the_statistics(self):
+        """Rows from before edge scoring are not comparable, so they sit out."""
+        for _ in range(4):
+            self._attempt({"tieBreak": "lowestIndex"}, 300)
+        for _ in range(4):
+            self._attempt_without_edge_count({"tieBreak": "nearestCentre"}, 210)
+
+        stats = self.tuner.arm_stats()["tieBreak"]
+        self.assertEqual(stats["lowestIndex"]["n"], 4)
+        self.assertNotIn("nearestCentre", stats)
 
     def test_breakdown_only_reports_values_actually_tried(self):
         for _ in range(3):
@@ -608,6 +757,10 @@ class EngineIntegrationTest(unittest.TestCase):
         end = next(e for e in events if e["type"] == "end")
         self.assertTrue(end["valid"], "engine reported an invalid board")
         self.assertLessEqual(end["nodes"], 250_000)
+        self.assertGreater(end["edges"], 0)
+        self.assertLessEqual(end["edges"], 480)
+        self.assertEqual(end["edges"] == 480, end["solved"],
+                         "only a solved board can match all 480 edges")
         self.assertEqual(len(end["order"]), end["best"])
         self.assertEqual(len(end["board"]), 256)
         # the fixed hint piece must be in place in the recorded order

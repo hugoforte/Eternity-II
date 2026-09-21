@@ -17,6 +17,10 @@ Do not edit it by hand; change the schema and regenerate.
   reachable on purpose: part of the fun is watching a setting fail.
 * **Learned** says whether the built-in learner is allowed to tune the value.
   The random seed is excluded, because it is noise rather than strategy.
+* **Only has an effect when ...** marks a setting that depends on another one.
+  Attempts where the condition did not hold are not counted as evidence about
+  it, so what the Insights tab says about it is based on the runs it could
+  really have changed.
 
 ## A note on safety
 
@@ -51,6 +55,8 @@ Default: **Most constrained** (`mrv`)
 
 Hybrid mode only: use most-constrained while the best square has at most this many choices.
 
+Only has an effect when Cell order is **Hybrid**.
+
 Range: `1` to `64` in steps of `1`
 
 | End of the slider | What happens |
@@ -65,6 +71,8 @@ Default: `4`
 `tieBreak` &middot; choice &middot; learned automatically
 
 Which square wins when several are equally constrained.
+
+Only has an effect when Cell order is **Most constrained** or **Hybrid**.
 
 | Choice | What it does |
 |---|---|
@@ -192,6 +200,8 @@ Default: **Never** (`none`)
 
 Nodes in the first run before the first restart.
 
+Only has an effect when Restart policy is **Fixed**, **Geometric** or **Luby**.
+
 Range: 1k, 5k, 10k, 50k, 100k, 500k, 1M, 5M
 
 | End of the slider | What happens |
@@ -206,6 +216,8 @@ Default: `100k`
 `restartMultiplier` &middot; slider &middot; learned automatically
 
 Geometric policy only: each run is this much longer than the last (percent).
+
+Only has an effect when Restart policy is **Geometric**.
 
 Range: `110` to `400` in steps of `10`
 

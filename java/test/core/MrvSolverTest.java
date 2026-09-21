@@ -585,6 +585,8 @@ public final class MrvSolverTest {
             if (found >= 1) {
                 String err = Validator.validateComplete(inst, s.solutionBoard);
                 T.isNull("solution for generated " + label + " passes validation", err);
+                T.eq("solution for generated " + label + " matches every internal edge",
+                     Validator.internalEdgeTotal(inst), s.bestMatchedEdges);
             }
         }
 
@@ -736,6 +738,11 @@ public final class MrvSolverTest {
             int filled = 0;
             for (int i = 0; i < s.bestBoard.length; i++) if (s.bestBoard[i] >= 0) filled++;
             T.eq("the snapshot has exactly bestPlaced pieces on it", s.bestPlaced, filled);
+            T.eq("the recorded edge count belongs to the deepest board",
+                 Validator.matchedEdges(e2, s.bestBoard), s.bestMatchedEdges);
+            T.check("a partial Eternity II board scores short of 480",
+                    s.bestMatchedEdges < Validator.internalEdgeTotal(e2),
+                    "bestMatchedEdges=" + s.bestMatchedEdges);
         }
 
         // the fixed piece must be present in the snapshot
@@ -752,5 +759,7 @@ public final class MrvSolverTest {
         T.eq("the search is deterministic (same node count on a rerun)", s.nodes, s2.nodes);
         T.eq("the search is deterministic (same best depth on a rerun)",
              s.bestPlaced, s2.bestPlaced);
+        T.eq("the search is deterministic (same matched edges on a rerun)",
+             s.bestMatchedEdges, s2.bestMatchedEdges);
     }
 }
