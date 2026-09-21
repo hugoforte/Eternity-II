@@ -431,12 +431,46 @@ Two things temper that. The 10B row is four seeds, not twenty, and the maximum o
 much weaker statistic than the maximum of twenty — the 1B row shows the same effect, where the first
 four seeds only tie the single run that twenty seeds beat. And the whole table is single-threaded;
 what the lab actually has is eight cores, where the choice is not "sample or run long" but "eight
-seeds of 10B or one seed of 80B", and that has not been measured.
+seeds of 10B or one seed of 80B". That has since been measured — see
+[the overnight eight-arm run](#the-overnight-eight-arm-run) below.
 
 **The useful conclusion is not that variation was a mistake.** It is that the natural candidate order
 is a strong order — strong enough to beat every seed once the search is given room — and that
 sampling on this engine is a way to buy depth cheaply at short budgets, not a way to go deeper than
 it can go. The lab now has the distribution and can price it.
+
+### The overnight eight-arm run
+
+Eight arms, six hours each, one core apiece: **640e9 nodes per arm, 5.2e12 in total**, at about
+31M nodes/sec with eight of the machine's twelve cores busy. Two arms were deterministic controls
+and six carried a seed at `shuffleStrength=25`, which is the comparison the section above left
+open.
+
+| arm | final | how it got there |
+|---|---|---|
+| seed5 | **250 / 456** | 454 at 4 min, **456 at 66 min** |
+| control-verhaard | **250 / 456** | 454 at 2 min, **456 at 92 min** |
+| seed1 | **250 / 456** | 454 at 99 min, **456 at 106 min** |
+| seed4 | **250 / 456** | 454 at 33 min, **456 at 166 min** |
+| seed6 | 249 / 454 | 454 at 234 min |
+| seed3 | 249 / 454 | 454 at 41 min |
+| seed2 | 249 / 454 | 454 at 23 min |
+| control-blackwood | 246 / 451 | 451 at 1 min, then nothing for six hours |
+
+**250 pieces / 456 matched edges is the best this project has recorded.** Four of the eight arms
+reached it and none went past it. The last improvement anywhere was at 166 minutes, so the final
+194 minutes across all eight cores produced nothing at all.
+
+**Eight seeds against one long descent is a tie.** The deterministic control reached 456 at 92
+minutes; the luckiest seed reached the same score at 66. Both stopped there, and five further hours
+moved neither. Sampling is not better here and it is not worse — it is a different route to the
+same place, which is what the converging spread in the table above predicts. That makes 456 a
+property of the engine rather than a lucky draw: eight independent searches, two of them with no
+randomness at all, agree on where the ceiling is.
+
+Note also that `blackwood` stalled at 451 after one minute and never moved again, while `verhaard`
+climbed for another hour and a half. The slip schedule decides how far the search can go long
+before the budget does.
 
 ### Restarts, measured, are worth much less than the seed
 
