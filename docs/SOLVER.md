@@ -18,6 +18,8 @@ java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
 java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
 java -cp java/classes core.ScanSolver 50000000 --quotaSchedule=blackwood
+# the best board this code reaches -- 250/256 pieces, 456/480 edges, ~5 min on one core
+java -cp java/classes core.ScanSolver 8000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
 java -cp java/classes app.Engine --engine=scan --workers=8   # one ScanSolver per worker, best wins
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
