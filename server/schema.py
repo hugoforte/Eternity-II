@@ -107,19 +107,17 @@ SETTINGS = [
         "label": "Quota colours",
         "kind": "enum",
         "group": "Search strategy",
-        "default": "13,16,10",
+        "default": "14,22,5",
         "tunable": True,
         "activeWhen": {"key": "quotaSchedule", "values": ["blackwood"]},
-        "blurb": "Which three colours the quota counts: one border colour and two interior ones. Ranked by how much room the ramp leaves them on our piece table.",
+        "blurb": "Which three colours the quota counts: one border colour and two interior ones. Blackwood chose his for their overlap, and no cheap statistic picks them out -- they came from reading his source.",
         "options": [
-            {"value": "13,16,10", "label": "Blackwood's",
-             "blurb": "His three colour numbers read as ours. One border colour and two interior ones, as he described, and 2 sides clear of impossible."},
-            {"value": "2,9,12", "label": "Most room",
-             "blurb": "The roomiest of all 680 triples on this piece table, and still only 4 sides clear of impossible."},
-            {"value": "3,9,12", "label": "Second roomiest",
-             "blurb": "Same two interior colours, a different border one."},
-            {"value": "13,9,12", "label": "Third roomiest",
-             "blurb": "Same again, on Blackwood's border colour."},
+            {"value": "14,22,5", "label": "Blackwood's",
+             "blurb": "His own three, carried across from his piece table's numbering into ours. Three pieces carry all three of them, which is the overlap he picked them for."},
+            {"value": "1,7,21", "label": "Most room",
+             "blurb": "The roomiest of all 680 triples once the ramp is measured against the cells the fill order has actually reached. Roomier than Blackwood's, and worse."},
+            {"value": "14,7,21", "label": "Most room, his border colour",
+             "blurb": "The roomiest triple that keeps Blackwood's border colour, so only the two interior ones change."},
         ],
     },
 
@@ -338,6 +336,11 @@ SETTINGS = [
         "kind": "int",
         "group": "Attempt",
         "min": 0, "max": 999999, "step": 1,
+        # Deliberately not SolverConfig's default of 0. Zero there means "do not
+        # vary the candidate order", so a bare CLI run and a benchmark measure the
+        # plain descent and stay reproducible. The lab wants the opposite: every
+        # attempt should differ, so it starts from a real seed and the tuner
+        # freshens it per attempt.
         "default": 12345,
         "tunable": False,
         "blurb": "Apply & restart reproduces a run exactly with this seed for its first attempt. Every later attempt, pinned or learner-chosen, gets a fresh one.",

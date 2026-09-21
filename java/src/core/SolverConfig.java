@@ -96,8 +96,14 @@ public final class SolverConfig {
     public int     slipSchedule        = SLIP_NONE;
     /** How many sides of {@link #quotaColours} must be spent by each depth. */
     public int     quotaSchedule       = QUOTA_NONE;
-    /** The colours the quota counts: one border colour and two interior ones. */
-    public String  quotaColours        = "13,16,10";
+    /**
+     * The colours the quota counts: one border colour and two interior ones.
+     * Blackwood's own three, which he writes 13, 16, 10 against a piece table
+     * that numbers its border colours 1, 5, 9, 13, 17 where this one numbers
+     * them 1, 2, 3, 13, 14.  Under the relabelling between the two tables his
+     * three are these.
+     */
+    public String  quotaColours        = "14,22,5";
     public int     cellOrder           = CELL_MRV;
     /** Hybrid switches to lowest-index once the MRV minimum exceeds this. */
     public int     hybridThreshold     = 4;
@@ -105,7 +111,16 @@ public final class SolverConfig {
     public int     valueOrder          = VALUE_NATURAL;
     /** 0 = untouched order, 100 = fully shuffled. */
     public int     shuffleStrength     = 0;
-    public long    randomSeed          = 12345L;
+    /**
+     * 0 means "do not vary the candidate order", and is the default so that the
+     * plain descent is what an unconfigured run measures.  Any non-zero seed
+     * permutes each key's candidate run.  {@link PortfolioSearch} derives its
+     * workers' seeds from this one, and splitmix64 maps 0 to 0, so worker 0
+     * runs that plain descent while the rest vary -- which is what the seed
+     * distribution says you want, since the unseeded order beats every seed
+     * once the search is given room.
+     */
+    public long    randomSeed          = 0L;
     public int     forwardCheck        = FC_FULL_BOARD;
     /** Prune interior candidates that would put grey on an inner edge. */
     public boolean greyInteriorPruning = true;

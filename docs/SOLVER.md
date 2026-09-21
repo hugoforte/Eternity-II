@@ -10,7 +10,7 @@ The solver is a plain Java program; the web app is only a front end for it.
 
 ```sh
 sh build.sh                                   # compile into java/classes
-sh test.sh                                    # 1364 checks, a few seconds
+sh test.sh                                    # 1368 checks, a few seconds
 
 java -cp java/classes core.MrvSolver          # MRV solver on Eternity II
 java -cp java/classes core.MrvSolver 50000000 # stop after 50M steps
@@ -405,14 +405,12 @@ a share of the keys rather than a share of each key: the useful setting is a lig
 **A cheap second opinion needs no randomness at all.** `valueOrder=reverse` reaches 243/442 — a
 different descent for free, and a second deterministic configuration where there were four.
 
-> **The figures in this section and the ones below it were measured before the portfolio merge.**
-> Upstream's `shuffleRuns` permutes each key's candidate run from `randomSeed` at construction, and
-> the default seed is 12345 rather than 0, so the default descent is not the descent these numbers
-> were taken on. Re-measured at 100M nodes after the merge: `verhaard` gives 243/442 where it gave
-> 245/446, and `blackwood` 223/409 where it gave 235/430. The comparisons these sections draw --
-> that sampling converges, that repair gains nothing, that the quota ramp is unsatisfiable -- do not
-> depend on the absolute values, but the absolute values will not reproduce exactly. The long-budget
-> numbers (249/454 at 10B, and the overnight 250/456) have not been re-measured post-merge.
+> **On reproducing these figures after the portfolio merge.** Upstream's `shuffleRuns` permutes each
+> key's candidate run whenever `randomSeed` is non-zero, which is what gives each `PortfolioSearch`
+> worker a different descent. `SolverConfig.randomSeed` therefore defaults to **0**, meaning "do not
+> vary the order", so a bare CLI run and everything in `core.Bench` measure the plain descent and
+> reproduce the numbers below exactly. The lab's own default is a real seed, because there every
+> attempt should differ.
 
 ### The same seeds at bigger budgets, where sampling stops paying and then costs
 
@@ -653,7 +651,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 
 ## The test suite
 
-`java -cp out core.AllTests` → **1364 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
+`java -cp out core.AllTests` → **1368 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
 60-line assertion helper so the suite runs with nothing but a JDK. Exits 1 on failure for CI.
 
 | Test file | What it covers |
