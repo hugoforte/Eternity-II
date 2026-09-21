@@ -697,14 +697,30 @@ onward. `core.Bench endgame` sweeps it.
 | 1B | +3 | 29.4 M | 459 / 480 | 253 / 256 | 207 | 15 |
 | 1B | +4 | 28.2 M | **464 / 480** | **256 / 256** | 207 | 16 |
 | 1B | +5 … +8 | — | 464 / 480 | 256 / 256 | 207 | 16 |
+| 10B | +0 | 27.0 M | 456 / 480 | 250 / 256 | 207 | 12 |
+| 10B | +2 | 26.8 M | 460 / 480 | 253 / 256 | 207 | 14 |
+| 10B | +3 | 26.6 M | 461 / 480 | 254 / 256 | 207 | 15 |
+| 10B | +4 | 21.6 M | **464 / 480** | **256 / 256** | 207 | 16 |
+| 10B | +5 | 22.6 M | 464 / 480 | 256 / 256 | 207 | 16 |
 
 **464 matched edges at a billion nodes, against 456 at ten billion without it.** Eight more edges
 for a tenth of the compute, from a dial that did not exist. The engine had never once finished a
 board; it now finishes at +4 and the score becomes 480 less whatever it broke.
 
-**It saturates, and the saturation is the point.** Beyond +4 nothing changes — the board is already
-finished, so more allowance is simply unused. The dial is not a score knob to be turned up; it is a
-constraint being removed, and once it is gone the search is bounded by the puzzle again.
+**It saturates in the allowance, and the saturation is the point.** Beyond +4 nothing changes — the
+board is already finished, so more allowance is simply unused. The dial is not a score knob to be
+turned up; it is a constraint being removed, and once it is gone the search is bounded by something
+else again.
+
+**It saturates in the budget too, and that is the more interesting half.** 464 at a billion nodes;
+**464 at ten billion.** Ten times the compute buys nothing once the ceiling is off. The unaided
+engine climbs 454 → 456 over that same decade, so the dial does not merely accelerate the old curve
+— it converts a ten-billion-node problem into a one-billion-node one and then stops paying
+altogether. Whatever bounds the score at 464 is neither the ceiling nor compute at this scale, and
+this document cannot yet say what it is.
+
+The baseline row is the cross-check: 10B at +0 reproduces 250 pieces / 456 edges exactly, which is
+the board the colour-quota section above records as this project's best before the dial existed.
 
 **Tiles placed stops being a progress measure here, and the `perfect` column is why the tables carry
 it.** At +6 the engine reports 256 / 256. That is a *filled* board, not a solved one: it carries 18
