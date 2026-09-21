@@ -50,7 +50,7 @@ Which search engine runs the attempt. They obey different settings.
 | Choice | What it does |
 |---|---|
 | **Most-constrained** | Picks the hardest square each step and prunes hard. ~1.4M steps/sec. |
-| **Fixed scan** | Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further, but runs the same way every time. |
+| **Fixed scan** | Fills a fixed order with a precomputed candidate table. ~50M steps/sec and reaches further. Repeats one descent unless the piece order is shuffled. |
 
 Default: **Most-constrained** (`mrv`)
 
@@ -161,16 +161,16 @@ Default: **Let it choose** (`auto`)
 
 `valueOrder` &middot; choice &middot; learned automatically
 
-The order in which candidate pieces are tried in a square.
+The order in which candidate pieces are tried in a square. This is the only thing the seed changes on the fixed scan.
 
-Only has an effect when Engine is **Most-constrained**.
+Only has an effect when Engine is **Most-constrained** or **Fixed scan**.
 
 | Choice | What it does |
 |---|---|
 | **Natural** | Piece number order. Deterministic and cache friendly. |
-| **Reversed** | Highest piece number first. |
-| **Shuffled** | Random order from the seed. Pairs well with restarts. |
-| **Rarest colours first** | Try pieces whose colours are scarce, to spend rare pieces early. |
+| **Reversed** | Highest piece number first. Deterministic, and a second descent for free. |
+| **Shuffled** | Random order from the seed. Pairs well with restarts, and is what lets the fixed scan give a second opinion. |
+| **Rarest colours first** | Try pieces whose colours are scarce, to spend rare pieces early. Most-constrained only; the fixed scan reads it as Natural. |
 
 Default: **Natural** (`natural`)
 
@@ -178,9 +178,9 @@ Default: **Natural** (`natural`)
 
 `shuffleStrength` &middot; slider &middot; learned automatically
 
-How much randomness is mixed into the piece order.
+How much randomness is mixed into the piece order. On the fixed scan it is the share of squares whose order is scrambled; the rest keep theirs.
 
-Only has an effect when Engine is **Most-constrained**.
+Only has an effect when Engine is **Most-constrained** or **Fixed scan**.
 
 Range: `0` to `100` in steps of `5`
 
@@ -245,9 +245,9 @@ Default: `on`
 
 `restartPolicy` &middot; choice &middot; learned automatically
 
-Abandon and restart the search to escape an unlucky early choice.
+Abandon and restart the search to escape an unlucky early choice. A restart re-draws the piece order, so it does nothing unless there is randomness to re-draw.
 
-Only has an effect when Engine is **Most-constrained**.
+Only has an effect when Engine is **Most-constrained** or **Fixed scan**.
 
 | Choice | What it does |
 |---|---|

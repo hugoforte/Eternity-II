@@ -27,6 +27,7 @@ public final class AllTests {
         MrvSolverTest.run();
         FillOrderTest.run();
         ScanSolverTest.run();
+        ScanVariationTest.run();
         EdgeSlippingTest.run();
         RepairTest.run();
         CrossValidationTest.run();

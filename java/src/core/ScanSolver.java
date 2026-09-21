@@ -105,13 +105,58 @@ package core;
  * about it: a board completed with breaks is recorded as the best seen and the
  * search carries on.  Only a board with no breaks is reported as a solution.
  *
+ * ------------------------------------------------- seeded candidate order
+ *
+ * Everything above is fixed by the instance, so without help this engine runs
+ * one descent and repeats it for ever: one configuration, one board, however
+ * long it is given.  {@code valueOrder} and {@code shuffleStrength} make the
+ * descent depend on {@code randomSeed}, and they do it entirely in the tables.
+ *
+ * A key's entries are a contiguous run, so the run can simply be permuted --
+ * {@link #orderCandidates} restores the natural order from {@link #baseWord} /
+ * {@link #baseMask} and reorders each run in place.  The search reads the same
+ * two arrays through the same two indices either way, so a seeded order costs
+ * the inner loop nothing at all.
+ *
+ * A permutation was chosen over a seeded starting offset because it is free:
+ * both are materialised at construction, so neither is visible from the hot
+ * loop, but a run of length L has L rotations and L! permutations, and the
+ * longer runs -- up to six entries on Eternity II -- get far more out of being
+ * permuted than rotated.
+ *
+ * What this cannot reach is the order WITHIN one (word, mask) pair: a word
+ * holds sixteen pieces and the four rotations of a piece share a nibble, so
+ * candidates that land in the same word keep their relative order.  Eternity
+ * II has 467 keys that offer anything at all, 263 of them offering a real
+ * choice of two candidates or more, and 203 of those spread that choice over
+ * more than one entry -- so a run permutation reorders about four keys in
+ * five.  Rotating the mask inside the loop would reach the rest, and was
+ * rejected: it puts two instructions on every candidate examined, and the
+ * seeds already differ.
+ *
+ * ------------------------------------------------------------------ restarts
+ *
+ * Restarts follow {@link SolverConfig#restartBudget}, the same schedule
+ * {@link MrvSolver} uses.  A restart here re-shuffles the candidate index from
+ * the advanced random stream before starting over, because a restart that only
+ * emptied the board would walk the identical tree again; the published
+ * guidance is that the cutoff schedule matters much less than re-randomising
+ * on restart.  The deepest board seen survives across restarts -- it is only
+ * ever replaced by a better one -- so a restart can never cost progress.
+ *
+ * Restarts are skipped when the candidate order is not seeded, and when
+ * enumerating exhaustively: after a restart the search has no record of which
+ * solutions it already reported, so it would count them twice.
+ *
  * ------------------------------------------------------------------- config
  *
  * This engine reads {@code fillOrder}, {@code slipSchedule},
- * {@code greyInteriorPruning} and {@code nodeBudget} from its
- * {@link SolverConfig} and nothing else: it has no cell heuristic to tune, no
- * value order and no randomness, so the remaining settings belong to
- * {@link MrvSolver}.
+ * {@code greyInteriorPruning}, {@code nodeBudget}, {@code valueOrder},
+ * {@code shuffleStrength}, {@code randomSeed} and the three {@code restart*}
+ * settings from its {@link SolverConfig}.  It has no cell heuristic, so the
+ * remaining settings belong to {@link MrvSolver}.  {@code valueOrder} has no
+ * rarest-colour analogue here -- a key's candidates all carry the same two
+ * known colours -- so that value orders the same way {@code natural} does.
  */
 public final class ScanSolver implements Search {
 
@@ -183,6 +228,9 @@ public final class ScanSolver implements Search {
     private final int[] keyLeftBreakEnd;
     private final int[] keyWord;
     private final long[] keyMask;
+    /** The natural index order, kept only when the runs are reordered. */
+    private final int[] baseWord;
+    private final long[] baseMask;
     private final int numClasses;
 
     /** Depth -> the most broken edges the board may carry by then. */
@@ -191,6 +239,8 @@ public final class ScanSolver implements Search {
     private final int[] checksBefore;
     /** Whether the configured schedule lets this board slip at all. */
     private final boolean slipping;
+    /** Whether the candidate order depends on {@code cfg.randomSeed}. */
+    private final boolean seeded;
 
     /** Variant -> its exposed right colour; index numVariants is the GREY sentinel. */
     private final int[] sideR;
@@ -207,6 +257,11 @@ public final class ScanSolver implements Search {
 
     private long sampleCountdown;
     private long startNanos;
+    private long rngState;
+    /** The node count this run stops at: the attempt's budget, or a restart cutoff. */
+    private long nodeCap;
+    private long restartNodeCap = Long.MAX_VALUE;
+    private boolean restartHit = false;
 
     // --------------------------------------------------------------- statistics
 
@@ -215,6 +270,7 @@ public final class ScanSolver implements Search {
     public int placed;
     public int bestPlaced;
     public boolean aborted;
+    public int restarts;
     public int[] bestBoard;
     /** Matched internal edges of {@link #bestBoard}, out of 480 on Eternity II. */
     public int bestMatchedEdges;
@@ -425,6 +481,21 @@ public final class ScanSolver implements Search {
             at = appendRun(topBits, b, words, at);
         }
 
+        // Reordering the runs is destructive, so the natural order is kept to
+        // rebuild from -- but only when something actually reorders them, so
+        // the default engine carries no extra table at all.
+        this.seeded = cfg.valueOrder == SolverConfig.VALUE_RANDOM
+                   || cfg.shuffleStrength > 0;
+        if (seeded || cfg.valueOrder == SolverConfig.VALUE_REVERSE) {
+            this.baseWord = new int[entries];
+            this.baseMask = new long[entries];
+            System.arraycopy(keyWord, 0, baseWord, 0, entries);
+            System.arraycopy(keyMask, 0, baseMask, 0, entries);
+        } else {
+            this.baseWord = null;
+            this.baseMask = null;
+        }
+
         // --- per-depth lookups ----------------------------------------------
         int[] depthOf = new int[cells];
         for (int d = 0; d < cells; d++) depthOf[order[d]] = d;
@@ -576,19 +647,98 @@ public final class ScanSolver implements Search {
     public void reset() {
         nodes = 0;
         solutions = 0;
-        placed = 0;
         bestPlaced = 0;
         bestMatchedEdges = 0;
         bestBreaks = 0;
         aborted = false;
+        restarts = 0;
         bestBoard = null;
         solutionBoard = null;
         bestOrderCells = null;
         bestOrderVariants = null;
         bestOrderLength = 0;
+        restartHit = false;
+        restartNodeCap = Long.MAX_VALUE;
+        nodeCap = nodeBudget;
+        rngState = (cfg.randomSeed == 0) ? 0x9E3779B97F4A7C15L : cfg.randomSeed;
         sampleCountdown = sampleEveryNodes;
+        clearBoard();
+        orderCandidates();
+    }
+
+    /** Empty the board and hand every piece back to the pool. */
+    private void clearBoard() {
+        placed = 0;
         for (int w = 0; w < words; w++) avail[w] = exist[w];
         for (int d = 0; d <= cells; d++) chosen[d] = numVariants;
+    }
+
+    // ------------------------------------------------------- candidate order
+
+    /**
+     * Lay the candidate index out in the order the search will read it.
+     *
+     * Every key's three runs are permuted independently and in place, starting
+     * from the natural order each time so that the same seed always produces
+     * the same layout however many times this is called.  Reordering a run
+     * changes only which candidate is tried first: the run still holds exactly
+     * the same (word, mask) pairs, so no seed can add or remove a board.
+     */
+    private void orderCandidates() {
+        if (baseWord == null) return;
+        System.arraycopy(baseWord, 0, keyWord, 0, keyWord.length);
+        System.arraycopy(baseMask, 0, keyMask, 0, keyMask.length);
+        for (int b = 0; b < keyPerfectEnd.length; b++) {
+            orderRun(keyStart[b], keyPerfectEnd[b]);
+            orderRun(keyPerfectEnd[b], keyLeftBreakEnd[b]);
+            orderRun(keyLeftBreakEnd[b], keyStart[b + 1]);
+        }
+    }
+
+    /**
+     * Reorder one key's run of (word, mask) pairs, honouring the config.
+     *
+     * {@code shuffleStrength} is the share of keys disturbed, not the share of
+     * each key's run.  {@link MrvSolver} spends it as transpositions of one
+     * cell's candidate list, which is long enough for that to be a dial; a key
+     * here holds one to six entries, so the same formula rounds to no swaps at
+     * all below a strength of 17.  Measurement said the useful dial is how
+     * much of the natural order survives, so a strength of s per cent
+     * scrambles s per cent of the keys and leaves the rest exactly as they
+     * were.
+     */
+    private void orderRun(int from, int to) {
+        int len = to - from;
+        if (len < 2) return;
+        if (cfg.valueOrder == SolverConfig.VALUE_REVERSE) {
+            for (int i = 0; i < len / 2; i++) swapEntries(from + i, to - 1 - i);
+        }
+        boolean scramble = cfg.valueOrder == SolverConfig.VALUE_RANDOM
+                        || (cfg.shuffleStrength > 0 && nextInt(100) < cfg.shuffleStrength);
+        if (!scramble) return;
+        for (int i = len - 1; i > 0; i--) swapEntries(from + i, from + nextInt(i + 1));
+    }
+
+    private void swapEntries(int i, int j) {
+        int w = keyWord[i];   keyWord[i] = keyWord[j];   keyWord[j] = w;
+        long m = keyMask[i];  keyMask[i] = keyMask[j];   keyMask[j] = m;
+    }
+
+    /** xorshift64, the same generator {@link MrvSolver} uses. */
+    private long nextRandom() {
+        long x = rngState;
+        x ^= (x << 13);
+        x ^= (x >>> 7);
+        x ^= (x << 17);
+        rngState = x;
+        return x;
+    }
+
+    private int nextInt(int bound) {
+        if (bound <= 1) return 0;
+        long r = nextRandom();
+        if (r < 0) r = -r;
+        return (int) (r % bound);
     }
 
     // ------------------------------------------------------------------ search
@@ -599,18 +749,58 @@ public final class ScanSolver implements Search {
      */
     public long solve() {
         startNanos = System.nanoTime();
-        dfs(0, 0);
+        long cap = hardCap();
+
+        // A restart is worth running only when there is something to
+        // re-randomise, and only when hunting for one solution: an exhaustive
+        // run that started over would report solutions it had already counted.
+        boolean useRestarts = cfg.restartPolicy != SolverConfig.RESTART_NONE
+                              && stopAtFirstSolution && seeded;
+
+        if (!useRestarts) {
+            restartNodeCap = Long.MAX_VALUE;
+            nodeCap = nodeBudget;
+            dfs(0, 0);
+        } else {
+            int k = 0;
+            while (true) {
+                restartNodeCap = nodes + cfg.restartBudget(k);
+                if (restartNodeCap > cap) restartNodeCap = cap;
+                nodeCap = (nodeBudget < restartNodeCap) ? nodeBudget : restartNodeCap;
+                restartHit = false;
+                dfs(0, 0);
+                if (solutions > 0 && stopAtFirstSolution) break;
+                if (aborted || nodes >= cap) break;
+                if (!restartHit) break;          // whole space explored
+                // Start over somewhere else.  The deepest board is untouched
+                // by this: it is only ever replaced by a better one.
+                k++;
+                restarts = k;
+                rngState = rngState * 6364136223846793005L + 1442695040888963407L;
+                if (rngState == 0) rngState = 0x9E3779B97F4A7C15L;
+                clearBoard();
+                orderCandidates();
+                if (listener != null) listener.onRestart(this, k);
+            }
+        }
+
         if (verbose) {
             long ms = elapsedMs();
             System.out.println("ScanSolver done: nodes=" + nodes
                 + " solutions=" + solutions
                 + " bestPlaced=" + bestPlaced + "/" + cells
                 + " bestBreaks=" + bestBreaks
+                + " restarts=" + restarts
                 + " aborted=" + aborted
                 + " ms=" + ms
                 + " nodes/s=" + (ms == 0 ? 0 : (nodes * 1000L / ms)));
         }
         return solutions;
+    }
+
+    /** The node count the whole attempt stops at, whatever the restart policy. */
+    private long hardCap() {
+        return (maxNodes < nodeBudget) ? maxNodes : nodeBudget;
     }
 
     /**
@@ -624,8 +814,10 @@ public final class ScanSolver implements Search {
 
         nodes++;
         placed = depth;
-        long cap = (maxNodes < nodeBudget) ? maxNodes : nodeBudget;
-        if (nodes >= cap) { aborted = true; return true; }
+        // nodeCap is the attempt's budget, lowered to the cutoff while a
+        // restart policy is running, so the hot path still reads one field.
+        long cap = (maxNodes < nodeCap) ? maxNodes : nodeCap;
+        if (nodes >= cap) return outOfBudget();
 
         if (listener != null) {
             if (--sampleCountdown <= 0) {
@@ -668,6 +860,18 @@ public final class ScanSolver implements Search {
             return true;
         }
         return false;
+    }
+
+    /**
+     * A budget ran out; say which one.  Reaching the attempt's own cap ends
+     * the search, reaching a restart cutoff only ends this run.
+     *
+     * @return true, so that every frame unwinds.
+     */
+    private boolean outOfBudget() {
+        if (nodes >= hardCap()) aborted = true;
+        else restartHit = true;
+        return true;
     }
 
     /**
@@ -756,8 +960,8 @@ public final class ScanSolver implements Search {
     public int bestPlaced() { return bestPlaced; }
     public int bestMatchedEdges() { return bestMatchedEdges; }
     public int bestBreaks() { return bestBreaks; }
-    /** Always 0: this engine has no randomness, so restarting it changes nothing. */
-    public int restarts() { return 0; }
+    /** How many times the search started over; 0 unless the order is seeded. */
+    public int restarts() { return restarts; }
     public boolean aborted() { return aborted; }
     public int[] bestBoard() { return bestBoard; }
     public int[] solutionBoard() { return solutionBoard; }
@@ -813,6 +1017,33 @@ public final class ScanSolver implements Search {
         }
         return count;
     }
+
+    /**
+     * The perfectly-matching candidates this cell class and colour pair
+     * offers, as variant numbers in the order the search will try them.
+     *
+     * This is the one thing the seed changes, so it is worth being able to
+     * read: two runs of the same seed must return the same order and two seeds
+     * must not, whatever board either of them goes on to find.
+     */
+    public int[] candidateOrderAtDepth(int depth, int left, int top) {
+        int key = classBase[depth] + top * numColours + left;
+        int[] out = new int[candidateCountAtDepth(depth, left, top)];
+        int at = 0;
+        for (int i = keyStart[key]; i < keyPerfectEnd[key]; i++) {
+            long bits = keyMask[i];
+            while (bits != 0L) {
+                out[at++] = (keyWord[i] << 6) + Long.numberOfTrailingZeros(bits);
+                bits &= bits - 1L;
+            }
+        }
+        int[] trimmed = new int[at];
+        System.arraycopy(out, 0, trimmed, 0, at);
+        return trimmed;
+    }
+
+    /** Whether the candidate order depends on {@code randomSeed}. */
+    public boolean seeded() { return seeded; }
 
     public int boardWidth() { return n; }
     public int cellTotal() { return cells; }
