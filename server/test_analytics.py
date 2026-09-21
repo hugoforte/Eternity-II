@@ -86,9 +86,9 @@ class AnalyzerTest(AnalyticsBaseTest):
     def test_finds_a_setting_effect_with_enough_evidence(self):
         """A and B at equal budget, A deeper -> one finding about cellOrder."""
         for _ in range(12):
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv'},
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'mrv'},
                           best_depth=210)
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'rowMajor'},
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'rowMajor'},
                           best_depth=150)
         result = self.analyzer.run()
         matches = [f for f in result['findings'] if f['id'] == 'setting_cellOrder']
@@ -105,14 +105,14 @@ class AnalyzerTest(AnalyticsBaseTest):
     def test_support_counts_only_attempts_a_setting_could_affect(self):
         """hybridThreshold does nothing unless the cell order is hybrid."""
         for _ in range(6):
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'hybrid',
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'hybrid',
                                                      'hybridThreshold': 1},
                           best_depth=150)
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'hybrid',
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'hybrid',
                                                      'hybridThreshold': 64},
                           best_depth=210)
         for _ in range(30):
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv',
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'mrv',
                                                      'hybridThreshold': 64},
                           best_depth=180)
         result = self.analyzer.run()
@@ -125,9 +125,9 @@ class AnalyzerTest(AnalyticsBaseTest):
     def test_strength_is_clamped_to_something_readable(self):
         """z blows up when two groups are totally separable; clamp kicks in."""
         for _ in range(30):
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv'},
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'mrv'},
                           best_depth=256)
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'rowMajor'},
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'rowMajor'},
                           best_depth=0)
         result = self.analyzer.run()
         matches = [f for f in result['findings'] if f['id'] == 'setting_cellOrder']
@@ -162,8 +162,8 @@ class AnalyzerTest(AnalyticsBaseTest):
     def test_ids_are_stable_across_rescans(self):
         """The same dataset analysed twice must produce the same finding ids."""
         for _ in range(10):
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv'}, best_depth=210)
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'rowMajor'}, best_depth=150)
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'mrv'}, best_depth=210)
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'rowMajor'}, best_depth=150)
         a = {f['id'] for f in self.analyzer.run()['findings']}
         b = {f['id'] for f in self.analyzer.run()['findings']}
         self.assertEqual(a, b)
@@ -172,8 +172,8 @@ class AnalyzerTest(AnalyticsBaseTest):
     def test_weak_pattern_drops_out_on_rescan(self):
         """A finding that stops showing up is removed (that is what the user sees)."""
         for _ in range(10):
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv'}, best_depth=210)
-            _seed_attempt(self.db, config_overrides={'cellOrder': 'rowMajor'}, best_depth=150)
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'mrv'}, best_depth=210)
+            _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': 'rowMajor'}, best_depth=150)
         self.analyze()
         self.assertIn('setting_cellOrder',
                       {f['id'] for f in self.db.latest_findings()})
@@ -181,8 +181,8 @@ class AnalyzerTest(AnalyticsBaseTest):
         # so the two groups end up with indistinguishable distributions.
         for _ in range(120):
             for cell in ('mrv', 'rowMajor'):
-                _seed_attempt(self.db, config_overrides={'cellOrder': cell}, best_depth=210)
-                _seed_attempt(self.db, config_overrides={'cellOrder': cell}, best_depth=150)
+                _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': cell}, best_depth=210)
+                _seed_attempt(self.db, config_overrides={'engine': 'mrv', 'cellOrder': cell}, best_depth=150)
         self.analyze()
         remaining = {f['id'] for f in self.db.latest_findings()}
         self.assertNotIn('setting_cellOrder', remaining,

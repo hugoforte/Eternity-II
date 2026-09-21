@@ -32,6 +32,7 @@ public final class AllTests {
         ColourQuotaTest.run();
         RepairTest.run();
         RootScreenTest.run();
+        PortfolioSearchTest.run();
         CrossValidationTest.run();
 
         long ms = (System.nanoTime() - start) / 1000000L;

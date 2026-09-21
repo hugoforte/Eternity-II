@@ -28,6 +28,7 @@ export class HistoryPanel {
     this.activeId = null;
     this.settingsMeta = [];
     this.recordDepth = 0;
+    this.recordEdges = 0;
 
     if (this.moreBtn && onLoadMore) {
       this.moreBtn.addEventListener('click', () => onLoadMore());
@@ -41,10 +42,12 @@ export class HistoryPanel {
   setStats(stats) {
     if (!stats) return;
     this.recordDepth = stats.bestDepth || 0;
+    this.recordEdges = stats.bestMatchedEdges || 0;
     if (this.statsEl) {
       this.statsEl.innerHTML = `
         <div>attempts<b>${stats.attempts ?? 0}</b></div>
-        <div>record<b>${stats.bestDepth ?? 0}<small>/256</small></b></div>
+        <div>record<b>${stats.bestDepth ?? 0}<small>/256, no wrongs</small></b></div>
+        <div>best edges<b>${stats.bestMatchedEdges ?? 0}<small>/480</small></b></div>
         <div>average<b>${stats.avgDepth ?? 0}</b></div>
         <div>total steps<b>${formatNumber(stats.totalNodes ?? 0)}</b></div>
       `;
@@ -67,7 +70,15 @@ export class HistoryPanel {
     if (!attempt) return;
     this.attempts = [attempt, ...this.attempts.filter((a) => a.id !== attempt.id)];
     this.total += 1;
-    if (attempt.bestDepth > this.recordDepth) this.recordDepth = attempt.bestDepth;
+    // A slipped attempt must never bump the pieces record, even optimistically
+    // here -- see setStats, which is the authoritative source and always runs
+    // first on a real attempt_finished event.
+    if (attempt.breaks === 0 && attempt.bestDepth > this.recordDepth) {
+      this.recordDepth = attempt.bestDepth;
+    }
+    if (attempt.matchedEdges != null && attempt.matchedEdges > this.recordEdges) {
+      this.recordEdges = attempt.matchedEdges;
+    }
     this.render(attempt.id);
   }
 
@@ -108,18 +119,34 @@ export class HistoryPanel {
     const pct = Math.round(((a.bestDepth || 0) / 256) * 100);
     const pills = [];
     if (a.solved) pills.push('<span class="pill solved">solved</span>');
-    if (a.bestDepth >= this.recordDepth && this.recordDepth > 0) {
+    // "record" means the pieces record, and that is only ever held by a
+    // clean attempt -- one with breaks itself can't be crowned just because
+    // its depth number happens to match the record's, even coincidentally.
+    if (a.breaks === 0 && a.bestDepth >= this.recordDepth && this.recordDepth > 0) {
       pills.push('<span class="pill record">record</span>');
+    }
+    // The edges record has no such restriction -- see history.js's setStats.
+    if (a.matchedEdges != null && this.recordEdges > 0 && a.matchedEdges >= this.recordEdges) {
+      pills.push('<span class="pill edges-record">edges record</span>');
     }
     if (a.userDefined) pills.push('<span class="pill custom">custom</span>');
     else if (a.source === 'explore') pills.push('<span class="pill explore">explore</span>');
     else pills.push('<span class="pill optimal">optimal</span>');
+
+    // Edge slipping can place every piece while some of them don't actually
+    // fit their neighbour, so that count rides along as a small caveat next
+    // to the piece count rather than a value of its own.
+    const breaks = a.breaks
+      ? `<span class="hcard-breaks">${escapeHtml('−')}${a.breaks} wrong</span>` : '';
+    const edges = a.matchedEdges != null
+      ? `<span class="hcard-edges">${a.matchedEdges}<i>/480 edges</i></span>` : '';
 
     node.innerHTML = `
       <div class="hcard-top">
         <span class="hcard-id">#${a.id}</span>
         ${pills.join('')}
         <span class="hcard-depth">${a.bestDepth}<i>/256</i></span>
+        ${edges}
       </div>
       <div class="hbar"><i style="width:${pct}%"></i></div>
       <div class="hcard-meta">
@@ -127,6 +154,7 @@ export class HistoryPanel {
         <span>${fmtDuration(a.durationMs || 0)}</span>
         <span>${formatNumber(a.nodesPerSec || 0)}/s</span>
         ${a.restarts ? `<span>${a.restarts} restarts</span>` : ''}
+        ${breaks}
         <span>${escapeHtml(STATUS_TEXT[a.status] || a.status || '')}</span>
       </div>
       <div class="hcard-cfg">${this.configSummary(a.config)}</div>
@@ -160,8 +188,14 @@ export class HistoryPanel {
       }
       return `<b>${escapeHtml(meta.label)}</b> ${escapeHtml(String(shown))}`;
     };
-    for (const key of ['cellOrder', 'valueOrder', 'forwardCheck', 'candidateCap',
-                       'restartPolicy', 'nodeBudget']) {
+    // Most of these belong to one engine or the other (see schema.py's
+    // activeWhen), so showing both sets regardless of which ran would make
+    // half the summary describe settings that never reached the search.
+    const keys = config.engine === 'scan'
+      ? ['engine', 'fillOrder', 'slipSchedule', 'nodeBudget']
+      : ['engine', 'cellOrder', 'valueOrder', 'forwardCheck', 'candidateCap',
+         'restartPolicy', 'nodeBudget'];
+    for (const key of keys) {
       const text = pick(key);
       if (text) parts.push(text);
     }

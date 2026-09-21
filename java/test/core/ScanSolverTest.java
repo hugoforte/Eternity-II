@@ -18,6 +18,7 @@ public final class ScanSolverTest {
         itRejectsAnImpossibleFixedPlacement();
         itStopsAtItsNodeBudget();
         itIsRepeatable();
+        itVariesWithTheSeed();
         itRunsOnTheRealPuzzle();
 
         T.endSection();
@@ -192,6 +193,49 @@ public final class ScanSolverTest {
         T.eq("re-running the same solver finds the same number of solutions", first, second);
         T.eq("and expands exactly the same number of nodes", firstNodes, s.nodes);
         T.eqIntArray("and returns the same board", firstBoard, s.solutionBoard);
+    }
+
+    // --------------------------------------------------------------- seeding
+
+    private static void itVariesWithTheSeed() {
+        // The node count itself is useless for telling seeds apart: once the
+        // search runs long enough to hit maxNodes, s.nodes is exactly the cap
+        // regardless of trajectory (see the abort check in dfs()). The board
+        // actually reached is what a different candidate order should change.
+        Instance inst = Instance.eternity2();
+        long[] seeds = { 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L };
+        int firstBest = -1;
+        boolean sawDifference = false;
+        for (long seed : seeds) {
+            SolverConfig cfg = new SolverConfig();
+            cfg.randomSeed = seed;
+            ScanSolver s = new ScanSolver(inst, cfg);
+            s.maxNodes = 2000000L;
+            s.solve();
+            T.check("the search actually used its whole budget (seed=" + seed + ")",
+                    s.aborted, "nodes=" + s.nodes);
+            if (firstBest < 0) firstBest = s.bestMatchedEdges;
+            else if (s.bestMatchedEdges != firstBest) sawDifference = true;
+        }
+        T.check("different seeds reach a different best board at an equal node budget",
+                sawDifference, "every one of " + seeds.length + " seeds matched "
+                    + firstBest + " edges");
+
+        SolverConfig cfgA = new SolverConfig();
+        cfgA.randomSeed = 999L;
+        ScanSolver a = new ScanSolver(inst, cfgA);
+        a.maxNodes = 500000L;
+        a.solve();
+
+        SolverConfig cfgB = new SolverConfig();
+        cfgB.randomSeed = 999L;
+        ScanSolver b = new ScanSolver(inst, cfgB);
+        b.maxNodes = 500000L;
+        b.solve();
+
+        T.eq("the same seed is fully reproducible across separate solver instances",
+             a.nodes, b.nodes);
+        T.eqIntArray("...and produces exactly the same best board", a.bestBoard, b.bestBoard);
     }
 
     // ------------------------------------------------------------- real puzzle

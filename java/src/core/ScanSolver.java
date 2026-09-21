@@ -77,6 +77,20 @@ package core;
  *
  * ---------------------------------------------------------- edge slipping
  *
+ * ------------------------------------------------------------- seeded variation
+ *
+ * With no randomness, this engine places the same board for the same config
+ * every time, which gives the learner nothing to gain by repeating an
+ * attempt.  {@code randomSeed} fixes that without touching the candidate
+ * semantics, the bit layout or the board format: {@link #shuffleRuns} permutes
+ * the (word, mask) entries within each key's perfect / left-broken /
+ * top-broken run once at construction, seeded from {@code randomSeed}, and
+ * never moves an entry across a run boundary.  A key whose candidates span
+ * more than one word gets a seed-dependent trial order; the set of candidates
+ * offered at that key is exactly the same either way.  Piece ids and
+ * rotations are never touched, so everything downstream (the board,
+ * {@link Validator}, JSON output) is none the wiser.
+ *
  * An exact search cannot score above whatever perfect prefix it reaches: once
  * no piece fits the next cell it can only back up.  With {@code slipSchedule}
  * set, the search may instead place a piece that deliberately mismatches ONE
@@ -582,6 +596,22 @@ public final class ScanSolver implements Search {
             this.baseWord = null;
             this.baseMask = null;
         }
+        // Both sides of this merge added a seeded shuffle, and both are kept.
+        // They compose -- a permutation of a permutation is still one -- but
+        // upstream's ran unconditionally, which would have made the seed-0
+        // descent depend on the seed and silently invalidated every unseeded
+        // measurement in docs/SOLVER.md.  Gating it on a non-zero seed keeps
+        // upstream's behaviour wherever a seed is set (the supervisor now
+        // always sets a fresh one) and keeps seed 0 reproducible.
+        // Both sides of this merge added a seeded shuffle and both are kept.
+        // Upstream's runs whenever a seed is set, which is what gives each
+        // PortfolioSearch worker a different descent -- gating it on anything
+        // narrower would make every worker identical.  It is skipped only when
+        // the quota gate is on, because that gate needs each key's candidates
+        // in descending colour-count order and shuffleRuns does not respect
+        // the grouping; seeded variation still reaches that mode through
+        // valueOrder/shuffleStrength, whose permute is group-aware.
+        if (cfg.randomSeed != 0L && quotaCount == null) shuffleRuns(cfg.randomSeed);
 
         // --- per-depth lookups ----------------------------------------------
         int[] depthOf = new int[cells];
@@ -642,6 +672,46 @@ public final class ScanSolver implements Search {
             }
         }
         return at;
+    }
+
+    /**
+     * Seed-driven diversity: permute the (word, mask) entries within each
+     * key's perfect / left-broken / top-broken run, without ever moving an
+     * entry across a run boundary.  A key whose candidates span more than one
+     * word therefore gets a seed-dependent trial order; a run of 0 or 1
+     * entries -- most of them, since Eternity II's whole index holds well
+     * under a thousand entries -- is unaffected.  Every entry in a run is
+     * still visited exactly once regardless of seed, so this changes only the
+     * descent, never the set of boards reachable from a node.
+     */
+    private void shuffleRuns(long seed) {
+        long state = seed ^ 0x9E3779B97F4A7C15L;
+        if (state == 0L) state = 1L;
+        int buckets = keyPerfectEnd.length;
+        for (int b = 0; b < buckets; b++) {
+            state = shuffleRange(keyStart[b], keyPerfectEnd[b], state);
+            state = shuffleRange(keyPerfectEnd[b], keyLeftBreakEnd[b], state);
+            state = shuffleRange(keyLeftBreakEnd[b], keyStart[b + 1], state);
+        }
+    }
+
+    /** Fisher-Yates over keyWord/keyMask[from, to), returning the RNG's new state. */
+    private long shuffleRange(int from, int to, long state) {
+        for (int i = to - 1; i > from; i--) {
+            state = xorshift64star(state);
+            int span = i - from + 1;
+            int j = from + (int) Long.remainderUnsigned(state >>> 1, span);
+            int tw = keyWord[i]; keyWord[i] = keyWord[j]; keyWord[j] = tw;
+            long tm = keyMask[i]; keyMask[i] = keyMask[j]; keyMask[j] = tm;
+        }
+        return state;
+    }
+
+    private static long xorshift64star(long state) {
+        state ^= state >>> 12;
+        state ^= state << 25;
+        state ^= state >>> 27;
+        return state * 0x2545F4914F6CDD1DL;
     }
 
     /**

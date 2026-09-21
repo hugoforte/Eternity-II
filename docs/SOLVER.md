@@ -10,7 +10,7 @@ The solver is a plain Java program; the web app is only a front end for it.
 
 ```sh
 sh build.sh                                   # compile into java/classes
-sh test.sh                                    # 1243 checks, a few seconds
+sh test.sh                                    # 1364 checks, a few seconds
 
 java -cp java/classes core.MrvSolver          # MRV solver on Eternity II
 java -cp java/classes core.MrvSolver 50000000 # stop after 50M steps
@@ -18,6 +18,7 @@ java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
 java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
 java -cp java/classes core.ScanSolver 50000000 --quotaSchedule=blackwood
+java -cp java/classes app.Engine --engine=scan --workers=8   # one ScanSolver per worker, best wins
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
 java -cp java/classes core.Bench engines 20   # the two engines, 20s each
@@ -41,6 +42,7 @@ java -cp java/classes app.Engine --nodeBudget=300000   # the JSONL engine, by ha
 | `java/src/core/ScanSolver.java` | **Engine 2**: fixed fill order + two-colour candidate index + edge slipping. ~37x the throughput. |
 | `java/src/core/FillOrder.java` | The fixed cell orders, and the frontier measures used to judge them. |
 | `java/src/core/Search.java` | What both engines expose to `app.Engine`, so an attempt can run either. |
+| `java/src/core/PortfolioSearch.java` | Runs several seeded `ScanSolver`s at once (one per core) and reports the best. |
 | `java/src/core/Solver.java` | Row-major solver with a one-step forward check (the previous version, kept as a baseline). |
 | `java/src/core/RefSolver.java` | Deliberately naive solver used only to cross-validate the fast one. |
 | `java/src/core/Validator.java` | Independent board checker. |
@@ -403,6 +405,15 @@ a share of the keys rather than a share of each key: the useful setting is a lig
 **A cheap second opinion needs no randomness at all.** `valueOrder=reverse` reaches 243/442 — a
 different descent for free, and a second deterministic configuration where there were four.
 
+> **The figures in this section and the ones below it were measured before the portfolio merge.**
+> Upstream's `shuffleRuns` permutes each key's candidate run from `randomSeed` at construction, and
+> the default seed is 12345 rather than 0, so the default descent is not the descent these numbers
+> were taken on. Re-measured at 100M nodes after the merge: `verhaard` gives 243/442 where it gave
+> 245/446, and `blackwood` 223/409 where it gave 235/430. The comparisons these sections draw --
+> that sampling converges, that repair gains nothing, that the quota ramp is unsatisfiable -- do not
+> depend on the absolute values, but the absolute values will not reproduce exactly. The long-budget
+> numbers (249/454 at 10B, and the overnight 250/456) have not been re-measured post-merge.
+
 ### The same seeds at bigger budgets, where sampling stops paying and then costs
 
 `java -cp java/classes core.Bench seeds 20 1000000000 25` — about 22 seconds a seed, and about
@@ -642,7 +653,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 
 ## The test suite
 
-`java -cp out core.AllTests` → **1243 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
+`java -cp out core.AllTests` → **1364 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
 60-line assertion helper so the suite runs with nothing but a JDK. Exits 1 on failure for CI.
 
 | Test file | What it covers |
@@ -660,6 +671,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree. |
 | `ColourQuotaTest` | The colour quota: Blackwood's ramp reproduced at 16x16 and scaled elsewhere, that the tracked colours really are offered first (which is what makes abandoning a run sound), that the floor is met at every depth of the board the engine returns, that the gate only ever *removes* solutions from an exhaustive run, and that a colour the instance cannot count is refused with the colour in the message. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
+| `PortfolioSearchTest` | That several workers never do worse than one of them alone, that nodes are genuinely summed across workers, that a solve still validates, and that the same seed and worker count reproduce exactly. |
 | `CrossValidationTest` | **The strongest evidence:** exhaustive solution counts vs the naive reference solver, for both fast engines, with slipping off. |
 
 ### The three tests that matter most
@@ -727,14 +739,35 @@ one.
 
 * **Conflict-driven backjumping / nogood learning** — analysed earlier as a poor return on this problem
   class once MRV and forward checking are in place.
-* **Parallel search** — the remaining cheap multiplier. Split on the top-left corner piece × rotation and
-  give each worker its own `MrvSolver`; state is only ~150 KB per worker. This is the obvious next step.
+* **Parallel search for `MrvSolver`.** Splitting on the top-left corner piece × rotation and giving each
+  worker its own `MrvSolver` (state is only ~150 KB per worker) is still open. `ScanSolver` got a
+  differently-shaped version of this instead -- see below -- because its lack of any per-attempt state
+  makes the split trivial; MRV's restart/tie-break machinery would need more thought to parallelise the
+  same way.
+* **A varying scan attempt** — done, twice and independently. `ScanSolver` permutes the (word, mask)
+  entries within each key's candidate run from `randomSeed` at construction (`shuffleRuns`), instead of
+  always trying the lowest-numbered piece first; the tuner randomises `randomSeed` on every automatic
+  attempt, so repeating `engine=scan` explores a different descent each time. `valueOrder` and
+  `shuffleStrength` expose the same idea as explicit dials with a reproducible unseeded baseline at
+  `randomSeed=0`. Both mechanisms are live and compose.
+* **Restarts for `ScanSolver`** — done, and worth much less than expected. A restart re-shuffles the
+  candidate index from the advanced RNG stream rather than merely emptying the board. Measured across
+  six seeds, median and maximum are unmoved and only the worst case improves by a piece: restarts cure
+  heavy-tailed runtimes, and a slipping descent has no tail, because it always reaches ~245 and is
+  never stuck.
+* **Cross-attempt parallelism** — done, for `ScanSolver` only. `app.Engine` runs `engine=scan` as a
+  `core.PortfolioSearch` of one independently-seeded `ScanSolver` per available core (each against the
+  full `nodeBudget`, not a shared fraction of it) and reports whichever finds the best board; `--workers=N`
+  overrides the auto-detected count, and `--workers=1` forces the plain single-descent path. This needed no
+  change to the Python supervisor at all -- one subprocess, now internally multi-threaded, is still one
+  subprocess from its point of view. Measured on the real puzzle at 20M nodes per worker on a 16-core
+  machine: 247/256 pieces, 450/480 edges in ~1s wall-clock, against 241/256 and 440/480 in 22s for a single
+  `ScanSolver` at 1B nodes (docs above) -- the same total node budget, spent across cores instead of one.
+  `MrvSolver` attempts are not parallelised this way; see the first bullet above.
 * **Reaching inside a `(word, mask)` pair.** The seeded permutation reorders a key's entries, which
   leaves the candidates that share a 64-bit word in their natural relative order — about one key in
   five on Eternity II, including the opening move. Rotating the mask in the loop would fix it for two
-  instructions per candidate examined. Not done, because the seeds already spread by 16 pieces
-  without it, so the instructions would be spent to buy something that has not been shown to be
-  missing.
-* **Sampling the parallel case.** The distribution above is 20 single-threaded runs; the lab runs
-  eight at once. Whether eight cores are better spent on eight seeds of one configuration or eight
-  configurations of one seed is now a measurable question, and has not been measured.
+  instructions per candidate examined. Not done, because the seeds already spread without it, so the
+  instructions would be spent to buy something that has not been shown to be missing.
+* **Eight seeds or one long descent** — measured; see [the overnight eight-arm run](#the-overnight-eight-arm-run).
+  It is a tie, and both routes stop at the same score.
