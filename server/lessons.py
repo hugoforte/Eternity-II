@@ -37,9 +37,9 @@ LESSON_STREAK = 3
 RETIRE_STRENGTH = 2.0
 RETIRE_STREAK = 2
 
-# Maximum UCB bonus a single lesson can add when the tuner evaluates arms.
-# One extra "piece" of simulated lift is already big relative to typical effect
-# sizes; we scale by the lesson's confidence.
+# Maximum UCB bonus a single lesson can add when the tuner evaluates arms,
+# in matched edges. A couple of edges of simulated lift is already meaningful
+# next to typical effect sizes; we scale by the lesson's confidence.
 BONUS_SCALE = 2.5
 
 

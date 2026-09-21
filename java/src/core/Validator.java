@@ -1,9 +1,9 @@
 package core;
 
 /**
- * Independent checker for complete and partial boards.  Written without
- * reference to any solver's internal state so it can be trusted to judge
- * solver output.
+ * Independent checker and scorer for complete and partial boards.  Written
+ * without reference to any solver's internal state so it can be trusted to
+ * judge solver output.
  */
 public final class Validator {
 
@@ -40,12 +40,35 @@ public final class Validator {
      */
     public static String validatePartial(Instance inst, int[] boardVariant,
                                          boolean requireAllPiecesUsed) {
+        return validatePartial(inst, boardVariant, requireAllPiecesUsed, 0);
+    }
+
+    /**
+     * Validate a possibly-incomplete board that is allowed to carry a known
+     * number of deliberately mismatched interior edges.
+     *
+     * {@link ScanSolver}'s edge slipping produces boards that break the
+     * matching rule on purpose but must still obey every other rule, and the
+     * engine promises exactly how many breaks it left.  Passing that promise
+     * in turns this into a check of the promise: a board with more mismatches
+     * than the caller expected is reported as an error, with both counts.
+     * Everything else -- piece reuse, border colours, fixed placements -- is
+     * judged exactly as strictly as before.
+     *
+     * @param allowedMismatches how many mismatched interior edges the caller
+     *                          expects; 0 demands a perfectly matched board.
+     */
+    public static String validatePartial(Instance inst, int[] boardVariant,
+                                         boolean requireAllPiecesUsed,
+                                         int allowedMismatches) {
         if (boardVariant == null) return "board is null";
         if (boardVariant.length != inst.cells) {
             return "board has " + boardVariant.length + " cells, expected " + inst.cells;
         }
         int n = inst.n;
         int[] useCount = new int[inst.numPieces];
+        int mismatches = 0;
+        String firstMismatch = null;
 
         for (int cell = 0; cell < inst.cells; cell++) {
             int v = boardVariant[cell];
@@ -87,8 +110,11 @@ public final class Validator {
                 if (nb >= 0) {
                     int q = inst.variantSides(nb >>> 2, nb & 3);
                     if (Sides.right(p) != Sides.left(q)) {
-                        return "cell " + cell + " right " + Sides.right(p)
-                             + " != cell " + (cell + 1) + " left " + Sides.left(q);
+                        mismatches++;
+                        if (firstMismatch == null) {
+                            firstMismatch = "cell " + cell + " right " + Sides.right(p)
+                                          + " != cell " + (cell + 1) + " left " + Sides.left(q);
+                        }
                     }
                 }
             }
@@ -98,11 +124,19 @@ public final class Validator {
                 if (nb >= 0) {
                     int q = inst.variantSides(nb >>> 2, nb & 3);
                     if (Sides.bottom(p) != Sides.top(q)) {
-                        return "cell " + cell + " bottom " + Sides.bottom(p)
-                             + " != cell " + (cell + n) + " top " + Sides.top(q);
+                        mismatches++;
+                        if (firstMismatch == null) {
+                            firstMismatch = "cell " + cell + " bottom " + Sides.bottom(p)
+                                          + " != cell " + (cell + n) + " top " + Sides.top(q);
+                        }
                     }
                 }
             }
+        }
+
+        if (mismatches > allowedMismatches) {
+            return mismatches + " mismatched edges, at most " + allowedMismatches
+                 + " allowed; first was " + firstMismatch;
         }
 
         if (requireAllPiecesUsed) {
@@ -130,5 +164,53 @@ public final class Validator {
             }
         }
         return null;
+    }
+
+    /**
+     * How many internal edges of the board are matched.
+     *
+     * The board has {@link #internalEdgeTotal} adjacent pairs of cells; the
+     * sides facing off the board are not scored, which is the measure every
+     * published Eternity II result is quoted in (480 for the 16x16 puzzle).
+     * A pair only counts when both of its cells hold a piece, so a partial
+     * board scores exactly what it has joined up so far.
+     *
+     * This says nothing about whether the board is legal; ask
+     * {@link #validatePartial} for that.
+     */
+    public static int matchedEdges(Instance inst, int[] boardVariant) {
+        if (boardVariant == null) throw new IllegalArgumentException("board is null");
+        if (boardVariant.length != inst.cells) {
+            throw new IllegalArgumentException("board has " + boardVariant.length
+                + " cells, expected " + inst.cells);
+        }
+        int n = inst.n;
+        int matched = 0;
+        for (int cell = 0; cell < inst.cells; cell++) {
+            int v = boardVariant[cell];
+            if (v < 0) continue;
+            int p = inst.variantSides(v >>> 2, v & 3);
+            int r = cell / n, c = cell - r * n;
+            if (c < n - 1) {
+                int nb = boardVariant[cell + 1];
+                if (nb >= 0) {
+                    int q = inst.variantSides(nb >>> 2, nb & 3);
+                    if (Sides.right(p) == Sides.left(q)) matched++;
+                }
+            }
+            if (r < n - 1) {
+                int nb = boardVariant[cell + n];
+                if (nb >= 0) {
+                    int q = inst.variantSides(nb >>> 2, nb & 3);
+                    if (Sides.bottom(p) == Sides.top(q)) matched++;
+                }
+            }
+        }
+        return matched;
+    }
+
+    /** Internal edges of an n x n board: 2*n*(n-1), so 480 for Eternity II. */
+    public static int internalEdgeTotal(Instance inst) {
+        return 2 * inst.n * (inst.n - 1);
     }
 }

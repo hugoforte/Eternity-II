@@ -18,9 +18,72 @@ group        UI grouping
 blurb        one-line explanation
 low/high     what happens at each extreme (shown under the slider)
 tunable      whether the learner is allowed to change it
+activeWhen   {'key', 'values'}: this setting only reaches the search when the
+             named setting holds one of those values.  A setting without it is
+             always active.  The learner credits a setting only for attempts it
+             could actually have influenced, so these have to match what the
+             engines read.
+
+A note on ``engine``
+--------------------
+Most of the strategy settings below belong to the most-constrained engine and
+are dead weight under the fixed-scan one, so they say so.  The condition is a
+single level deep: ``hybridThreshold`` depends on ``cellOrder``, which in turn
+depends on ``engine``, and ``is_active`` does not follow that chain.
 """
 
 SETTINGS = [
+    # -------------------------------------------------------------- engine
+    {
+        "key": "engine",
+        "label": "Engine",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "mrv",
+        "tunable": True,
+        "blurb": "Which search engine runs the attempt. They obey different settings.",
+        "options": [
+            {"value": "mrv", "label": "Most-constrained",
+             "blurb": "Picks the hardest square each step and prunes hard. ~1.4M steps/sec."},
+            {"value": "scan", "label": "Fixed scan",
+             "blurb": "Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further, but runs the same way every time."},
+        ],
+    },
+    {
+        "key": "fillOrder",
+        "label": "Fill order",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "banded",
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: the route the solver takes across the board.",
+        "options": [
+            {"value": "banded", "label": "Banded",
+             "blurb": "Row scan, then a narrowed scan, then the bottom band column by column, then nested L-shapes. A mistake surfaces sooner where the search is deepest."},
+            {"value": "rowMajor", "label": "Plain rows",
+             "blurb": "Straight left-to-right, top-to-bottom. Simplest route, longest wait before a mistake shows."},
+        ],
+    },
+    {
+        "key": "slipSchedule",
+        "label": "Edge slipping",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "blackwood",
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: how many edges the solver may leave deliberately mismatched, and from how deep into the board.",
+        "options": [
+            {"value": "none", "label": "Never",
+             "blurb": "Every placed edge must match. Exact, but the board can never score above the best perfect start it happens to find."},
+            {"value": "blackwood", "label": "Blackwood",
+             "blurb": "One mismatch allowed from square 201, rising to ten by square 239. The published schedule behind the best known result."},
+            {"value": "verhaard", "label": "Verhaard",
+             "blurb": "Starts at square 193 and allows twelve by square 240. More generous, and measured further on this engine."},
+        ],
+    },
+
     # ------------------------------------------------------------ strategy
     {
         "key": "cellOrder",
@@ -29,6 +92,7 @@ SETTINGS = [
         "group": "Search strategy",
         "default": "mrv",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "How the solver picks which empty square to fill next.",
         "options": [
             {"value": "mrv", "label": "Most constrained",
@@ -47,6 +111,7 @@ SETTINGS = [
         "min": 1, "max": 64, "step": 1,
         "default": 4,
         "tunable": True,
+        "activeWhen": {"key": "cellOrder", "values": ["hybrid"]},
         "blurb": "Hybrid mode only: use most-constrained while the best square has at most this many choices.",
         "low": "1 = almost always sweep in order",
         "high": "64 = almost always most-constrained",
@@ -58,6 +123,7 @@ SETTINGS = [
         "group": "Search strategy",
         "default": "mostNeighbours",
         "tunable": True,
+        "activeWhen": {"key": "cellOrder", "values": ["mrv", "hybrid"]},
         "blurb": "Which square wins when several are equally constrained.",
         "options": [
             {"value": "mostNeighbours", "label": "Most neighbours",
@@ -79,6 +145,7 @@ SETTINGS = [
         "group": "Search strategy",
         "default": "auto",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "Which square the solver is forced to fill first.",
         "options": [
             {"value": "auto", "label": "Let it choose", "blurb": "No constraint on the opening move."},
@@ -98,6 +165,7 @@ SETTINGS = [
         "group": "Piece choice",
         "default": "natural",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "The order in which candidate pieces are tried in a square.",
         "options": [
             {"value": "natural", "label": "Natural",
@@ -117,6 +185,7 @@ SETTINGS = [
         "min": 0, "max": 100, "step": 5,
         "default": 0,
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "How much randomness is mixed into the piece order.",
         "low": "0 = keep the chosen order exactly",
         "high": "100 = fully scrambled every time",
@@ -129,6 +198,7 @@ SETTINGS = [
         "values": [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024],
         "default": 1024,
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "Maximum number of pieces tried in any one square before giving up on it.",
         "low": "1 = greedy. Blisteringly fast, can never find a full solution",
         "high": "1024 = try everything. Complete search",
@@ -142,6 +212,7 @@ SETTINGS = [
         "group": "Pruning",
         "default": "fullBoard",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "How hard the solver looks for dead ends before committing.",
         "options": [
             {"value": "none", "label": "None", "blurb": "Never look ahead. Maximum speed per step, worst pruning."},
@@ -171,6 +242,7 @@ SETTINGS = [
         "group": "Restarts",
         "default": "none",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "Abandon and restart the search to escape an unlucky early choice.",
         "options": [
             {"value": "none", "label": "Never", "blurb": "One long search."},
@@ -187,6 +259,7 @@ SETTINGS = [
         "values": [1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000],
         "default": 100000,
         "tunable": True,
+        "activeWhen": {"key": "restartPolicy", "values": ["fixed", "geometric", "luby"]},
         "blurb": "Nodes in the first run before the first restart.",
         "low": "1k = restart constantly, never goes deep",
         "high": "5M = restarts almost never happen",
@@ -199,6 +272,7 @@ SETTINGS = [
         "min": 110, "max": 400, "step": 10,
         "default": 150,
         "tunable": True,
+        "activeWhen": {"key": "restartPolicy", "values": ["geometric"]},
         "blurb": "Geometric policy only: each run is this much longer than the last (percent).",
         "low": "110% = barely grows, many short runs",
         "high": "400% = runs get long very quickly",
@@ -270,6 +344,27 @@ def arms(setting):
 
 def tunable_settings():
     return [s for s in SETTINGS if s.get("tunable", True)]
+
+
+def is_active(key, config):
+    """Could this setting have changed what an attempt using ``config`` did?
+
+    A conditional setting (``activeWhen``) is dead weight unless the setting it
+    depends on holds one of the listed values: ``restartMultiplier`` never
+    reaches the search unless the policy is geometric, for example.  Crediting
+    an arm for attempts it could not influence is how noise gets promoted to a
+    conclusion, so every per-setting statistic asks this first.
+    """
+    setting = BY_KEY.get(key)
+    if setting is None:
+        raise KeyError("no such setting: %r" % (key,))
+    dependency = setting.get("activeWhen")
+    if dependency is None:
+        return True
+    # A config that omits the dependency ran with whatever the engine defaults
+    # to, which is what coerce() returns for a missing value.
+    actual = coerce(dependency["key"], (config or {}).get(dependency["key"]))
+    return actual in dependency["values"]
 
 
 def coerce(key, value):

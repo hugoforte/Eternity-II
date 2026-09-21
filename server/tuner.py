@@ -1,8 +1,9 @@
-"""Learns which settings produce deeper boards, and proposes the next config.
+"""Learns which settings produce better boards, and proposes the next config.
 
 How it works
 ------------
-Each finished attempt is scored, then every setting is treated as an independent
+Each finished attempt is scored by the matched internal edges of its best
+board (480 on a solved puzzle), then every setting is treated as an independent
 multi-armed bandit over its discrete choices (``schema.arms``).  For the *next*
 attempt the tuner picks, per setting, the arm with the best UCB1 value:
 
@@ -33,8 +34,8 @@ import schema
 # without the nudge becoming an iron rule.
 LESSONS_REQUIRED = False
 
-# Exploration weight, in "pieces placed" units. Scores are roughly 0..256, so a
-# few pieces' worth of optimism is a sensible nudge.
+# Exploration weight, in matched-edge units. Scores run 0..480, so a handful
+# of edges' worth of optimism is a sensible nudge.
 UCB_C = 6.0
 
 # Minimum attempts on a value before it can be called "optimal".
@@ -46,25 +47,35 @@ INSIGHT_MIN_PER_ARM = 3
 INSIGHT_MIN_TOTAL = 8
 
 
-def score_attempt(best_depth, nodes, node_budget, solved):
-    """Score an attempt.
+def score_attempt(matched_edges, nodes, node_budget, solved):
+    """Score an attempt by the puzzle's own measure: matched internal edges.
 
-    Depth dominates: one extra piece always beats any efficiency gain.  Within
-    the same depth, reaching it with fewer nodes scores slightly higher, which
-    rewards configurations that get there cheaply.  A solve is worth a clear
-    bonus above any partial board.
+    Eternity II is scored in edges, not pieces placed: the board has 480
+    internal adjacencies and the grey rim is not scored.  Edges dominate: one
+    extra matched edge always beats any efficiency gain.  Between two boards
+    worth the same, the one that got there with fewer nodes scores slightly
+    higher, which rewards configurations that are cheap as well as good.  A
+    solve is worth a clear bonus above any partial board.
+
+    ``matched_edges`` is required: attempts recorded before the engine
+    reported it have none, and they are excluded from edge statistics rather
+    than counted as zero (see :meth:`Tuner.arm_stats`).
     """
-    depth = float(best_depth or 0)
+    if matched_edges is None:
+        raise ValueError(
+            "cannot score an attempt with no matched-edge count; attempts "
+            "recorded before edge scoring have to be excluded instead")
     if solved:
         return 1000.0
+    edges = float(matched_edges)
     budget = float(node_budget or 0)
     used = float(nodes or 0)
     if budget > 0 and used > 0:
         efficiency = 1.0 - min(1.0, used / budget)
     else:
         efficiency = 0.0
-    # efficiency contributes strictly less than one extra piece
-    return depth + 0.95 * efficiency
+    # efficiency contributes strictly less than one extra matched edge
+    return edges + 0.95 * efficiency
 
 
 class Tuner:
@@ -84,7 +95,12 @@ class Tuner:
 
           mean  plain average score of attempts that used that value
           adj   average score *relative to other attempts of the same attempt
-                length*, i.e. "pieces better than a typical run of that budget"
+                length*, i.e. "edges better than a typical run of that budget"
+
+        Only attempts a setting could have influenced count toward its arms:
+        see ``schema.is_active``.  ``n`` is therefore the number of *relevant*
+        attempts, which is what the optimal table and the insights report as
+        their support.
 
         ``adj`` is what the learner actually optimises.  Attempt length is
         itself a tunable setting, so a 100k-step run can never reach as deep as
@@ -100,10 +116,15 @@ class Tuner:
         by_budget = {}
         rows = []
         for row in history:
+            # An attempt with no edge count predates edge scoring: its stored
+            # score is in the old depth units and no edge count can be
+            # recovered from its depth, so it is evidence about nothing here.
+            if row["matchedEdges"] is None:
+                continue
             cfg = row["config"]
             score = row["score"]
             if score is None:
-                score = score_attempt(row["bestDepth"], row["nodes"],
+                score = score_attempt(row["matchedEdges"], row["nodes"],
                                       cfg.get("nodeBudget"), row["solved"])
             budget = _arm_key(cfg.get("nodeBudget"))
             rows.append((row, cfg, score, budget))
@@ -119,6 +140,11 @@ class Tuner:
             for setting in schema.tunable_settings():
                 key = setting["key"]
                 if key not in cfg:
+                    continue
+                # A conditional setting that could not reach the search says
+                # nothing about this attempt; crediting its arm anyway is how a
+                # value chosen at random ends up looking significant.
+                if not schema.is_active(key, cfg):
                     continue
                 arm = _arm_key(schema.coerce(key, cfg[key]))
                 bucket = stats[key].setdefault(
@@ -160,16 +186,16 @@ class Tuner:
             config[key] = value
 
             if len(eligible) == 1:
-                reason = "only value tried so far (%d attempts, avg depth %.1f)" % (
+                reason = "only value tried so far (%d attempts, avg %.1f edges)" % (
                     best_bucket["n"], best_bucket["mean"])
             elif key == "nodeBudget":
                 worst = eligible[-1]
-                reason = "reaches %.1f more pieces than %s (avg depth %.1f over %d attempts)" % (
+                reason = "matches %.1f more edges than %s (avg %.1f over %d attempts)" % (
                     best_bucket["mean"] - worst[1]["mean"], _label(key, worst[0]),
                     best_bucket["mean"], best_bucket["n"])
             else:
                 worst = eligible[-1]
-                reason = ("%+.1f pieces vs a typical run of the same length "
+                reason = ("%+.1f edges vs a typical run of the same length "
                           "over %d attempts; %.1f ahead of %s") % (
                     best_bucket["adj"], best_bucket["n"],
                     best_bucket["adj"] - worst[1]["adj"], _label(key, worst[0]))
@@ -267,17 +293,17 @@ class Tuner:
                 continue          # nothing worth reporting
 
             if key == "nodeBudget":
-                headline = "%s: %s reaches %.1f more pieces than %s" % (
+                headline = "%s: %s matches %.1f more edges than %s" % (
                     setting["label"], _label(key, best_arm), lift, _label(key, worst_arm))
-                detail = ("Longer attempts dig deeper, as expected: %s averaged %.1f pieces "
-                          "(best %d) over %d attempts, %s averaged %.1f over %d.") % (
+                detail = ("Longer attempts dig deeper, as expected: %s averaged %.1f edges "
+                          "(best depth %d) over %d attempts, %s averaged %.1f over %d.") % (
                     _label(key, best_arm), best["mean"], best["best"], best["n"],
                     _label(key, worst_arm), worst["mean"], worst["n"])
             else:
-                headline = "%s: %s beats %s by %.1f pieces" % (
+                headline = "%s: %s beats %s by %.1f edges" % (
                     setting["label"], _label(key, best_arm), _label(key, worst_arm), lift)
                 detail = ("Compared only against runs of the same attempt length: "
-                          "%s scored %+.1f (best depth %d, %d attempts), "
+                          "%s scored %+.1f edges (best depth %d, %d attempts), "
                           "%s scored %+.1f (%d attempts).") % (
                     _label(key, best_arm), best["adj"], best["best"], best["n"],
                     _label(key, worst_arm), worst["adj"], worst["n"])

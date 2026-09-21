@@ -44,7 +44,10 @@ eternity2-lab/
 │   │   ├── Sides.java         packed side colours + rotation arithmetic
 │   │   ├── Instance.java      a puzzle instance (board, pieces, fixed placements)
 │   │   ├── SolverConfig.java  every tunable decision, with the old hard-coded values as defaults
-│   │   ├── MrvSolver.java     the solver: MRV ordering over a bitset piece pool
+│   │   ├── MrvSolver.java     engine 1: MRV ordering over a bitset piece pool
+│   │   ├── ScanSolver.java    engine 2: fixed fill order + two-colour candidate index
+│   │   ├── FillOrder.java     the fixed cell orders, and the measures that judge them
+│   │   ├── Search.java        what both engines expose to app.Engine and the lab
 │   │   ├── Solver.java        the earlier row-major solver, kept as a baseline
 │   │   ├── RefSolver.java     deliberately naive solver, used only to cross-check the fast one
 │   │   ├── Validator.java     independent board checker
@@ -52,7 +55,7 @@ eternity2-lab/
 │   │   ├── Bench.java         benchmarks
 │   │   └── Puzzle.java        the original frame-by-frame prototype (historical reference)
 │   ├── src/app/Engine.java    the JSONL streaming wrapper
-│   ├── test/core/             the solver test suite (958 checks)
+│   ├── test/core/             the solver test suite (1119 checks)
 │   └── classes/               build output
 ├── server/
 │   ├── app.py           HTTP + SSE server
@@ -81,13 +84,23 @@ One attempt = one `app.Engine` process. Configuration arrives as
 |---|---|---|
 | `meta` | once, at startup | `n`, `cells`, `variants`, `colours`, `pieces` (all 256 edge tuples), `fixed`, `config` |
 | `frame` | ~9×/second | `ms`, `nodes`, `nps`, `placed`, `best`, `restarts`, `board` |
-| `best` | whenever the record improves | `ms`, `nodes`, `placed`, `board` |
+| `best` | whenever the record improves | `ms`, `nodes`, `placed`, `edges`, `breaks`, `board` |
 | `restart` | on each restart | `ms`, `nodes`, `index` |
-| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
+| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `edges`, `breaks`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
 
 `board` is 256 integers, one per cell: `-1` for empty, otherwise
 `(pieceId << 2) | rotation`. The UI unpacks that and rotates the piece's edge
 tuple to draw it.
+
+`edges` is what the board actually scores: the internal adjacencies whose two
+sides agree, out of the 480 the 16x16 board has (the grey rim is not scored).
+`Validator.matchedEdges` counts it, and the solver only does so when it records
+a new best board, so the search loop never pays for it.
+
+`breaks` is how many interior edges the engine mismatched on purpose. Only the fixed-scan engine's
+edge slipping ever reports more than zero, and a board with any is never `solved`: that word keeps
+meaning a validated 256-piece board scoring 480. The supervisor refuses a `solved` claim that
+arrives with breaks and writes the refusal to stderr, so the two layers have to agree.
 
 `order` is the payload that makes replay possible: the cells of the deepest board
 **in the order they were placed**, as `[cell, piece, rotation]` triples. The
@@ -170,8 +183,8 @@ and safer than a pool.
 
 ```sql
 attempts(id, started_at, finished_at, status, solved, valid, best_depth,
-         nodes, duration_ms, nodes_per_sec, restarts, user_defined, source,
-         score, config_json)
+         matched_edges, nodes, duration_ms, nodes_per_sec, restarts,
+         user_defined, source, score, config_json)
 
 placements(attempt_id, seq, cell, piece, rot)      -- the replay timeline
 samples(attempt_id, seq, ms, nodes, best)          -- the progress chart
@@ -188,6 +201,11 @@ Two housekeeping rules keep the history honest:
 * Runs that never searched (`nodes = 0`) are deleted rather than displayed.
 * Runs the user cut short are stored with status `aborted` and excluded from
   learning, because their settings never got a fair budget.
+
+`matched_edges` is NULL on attempts recorded before the engine reported it. A
+depth cannot be converted into an edge count after the fact, so those rows are
+left out of the tuner's statistics rather than counted as a board that matched
+nothing. A file from an older version gains the column on open.
 
 ---
 
@@ -226,8 +244,13 @@ newest board is remembered, which is why **Back to live** is instant.
 
 One place:
 
-1. Add an entry to `SETTINGS` in `server/schema.py`.
-2. Handle the key in `SolverConfig.apply()` and use it in `MrvSolver`.
+1. Add an entry to `SETTINGS` in `server/schema.py`. If the setting only
+   reaches the search under some other setting's value, declare that with
+   `activeWhen` so the learner ignores attempts it could not have changed.
+2. Handle the key in `SolverConfig.apply()` and use it in the engine it
+   belongs to. If only one engine reads it, give it
+   `activeWhen: {"key": "engine", ...}` so the other engine's attempts are not
+   counted as evidence about it.
 3. `python3 server/gen_docs.py`.
 
 The control appears in the UI, the learner starts tuning it, it is stored with
@@ -325,9 +348,9 @@ it guide future attempts.  Lives in `server/lessons.py`.
 The tuner owns exploration.  It does **not** take orders.  Every time it
 evaluates an arm for UCB1 selection it calls
 `LessonManager.bonus_for(setting, arm)`, which adds up to
-`BONUS_SCALE * confidence` pieces' worth of score to arms matching any
-active lesson.  That is meaningful (a typical effect size is only a couple
-of pieces) but not absolute, so:
+`BONUS_SCALE * confidence` edges' worth of score to arms matching any
+active lesson.  That is meaningful (a typical effect size is only a few
+edges) but not absolute, so:
 
 * If the lesson is *also* supported by the live mean score, the tuner will
   pick the endorsed value.

@@ -86,6 +86,68 @@ public final class InstanceTest {
         T.eq("no-fixed-piece variant has no fixed placements", 0, bare.fixedCell.length);
         T.eq("no-fixed-piece variant has the same pieces", 256, bare.numPieces);
 
+        // --- the strict-canonical clue set -----------------------------------
+        Instance strict = Instance.eternity2StrictCanonical();
+        T.eq("strict canonical pins all five clues", 5, strict.fixedCell.length);
+
+        // Published as 139 at I8, 208 at C3, 255 at C14, 181 at N3, 249 at N14,
+        // rows lettered A-P downwards and columns 1-16 across; here zero-based.
+        int[] wantCell  = { 8 * 16 + 7, 2 * 16 + 2, 2 * 16 + 13, 13 * 16 + 2, 13 * 16 + 13 };
+        int[] wantPiece = { 138, 207, 254, 180, 248 };
+        boolean cellsRight = true, piecesRight = true;
+        for (int i = 0; i < 5; i++) {
+            if (strict.fixedCell[i] != wantCell[i]) cellsRight = false;
+            if (strict.fixedPiece[i] != wantPiece[i]) piecesRight = false;
+        }
+        T.check("strict canonical pins the published cells", cellsRight);
+        T.check("strict canonical pins the published pieces", piecesRight);
+
+        boolean distinct = true;
+        for (int i = 0; i < 5; i++) {
+            for (int j = i + 1; j < 5; j++) {
+                if (strict.fixedCell[i] == strict.fixedCell[j]) distinct = false;
+                if (strict.fixedPiece[i] == strict.fixedPiece[j]) distinct = false;
+            }
+        }
+        T.check("no clue shares a cell or a piece with another", distinct);
+
+        // The mandatory placement must survive unchanged: the strict track adds
+        // to the canonical one, it does not reinterpret it.
+        T.eq("strict canonical keeps the mandatory cell",
+             e2.fixedCell[0], strict.fixedCell[0]);
+        T.eq("strict canonical keeps the mandatory piece",
+             e2.fixedPiece[0], strict.fixedPiece[0]);
+        T.eq("strict canonical keeps the mandatory rotation",
+             e2.fixedRot[0], strict.fixedRot[0]);
+
+        // Every clue sits in the interior, and grey may not appear there.  Grey
+        // count is rotation-invariant, so this holds whatever the offset is.
+        boolean interiorClean = true;
+        for (int i = 0; i < 5; i++) {
+            int cell = strict.fixedCell[i];
+            int r = cell / 16, c = cell % 16;
+            if (r == 0 || c == 0 || r == 15 || c == 15) interiorClean = false;
+            int p = strict.packedSides[strict.fixedPiece[i]];
+            if (Sides.left(p) == Sides.GREY || Sides.top(p) == Sides.GREY
+                    || Sides.right(p) == Sides.GREY || Sides.bottom(p) == Sides.GREY) {
+                interiorClean = false;
+            }
+        }
+        T.check("every clue is an interior cell holding a piece with no grey side",
+                interiorClean);
+
+        // The offset only means something modulo a full turn.
+        Instance wrapped = Instance.eternity2WithClues(4);
+        Instance zero = Instance.eternity2WithClues(0);
+        boolean wraps = true;
+        for (int i = 0; i < 5; i++) {
+            if (wrapped.fixedRot[i] != zero.fixedRot[i]) wraps = false;
+        }
+        T.check("a four-quarter-turn offset is the same as none", wraps);
+
+        T.eq("the canonical instance still pins only the mandatory piece",
+             1, e2.fixedCell.length);
+
         // --- input validation -----------------------------------------------
         boolean threw;
 

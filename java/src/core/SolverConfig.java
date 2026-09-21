@@ -12,6 +12,29 @@ package core;
  */
 public final class SolverConfig {
 
+    // ----------------------------------------------------------------- engine
+
+    /** {@link MrvSolver}: dynamic most-constrained-variable ordering. */
+    public static final int ENGINE_MRV  = 0;
+    /** {@link ScanSolver}: fixed fill order, two-colour candidate index. */
+    public static final int ENGINE_SCAN = 1;
+
+    // ------------------------------------------------------------- fill order
+
+    /** Row scan, narrowed scan, column sweep, nested L-shapes. */
+    public static final int FILL_BANDED    = 0;
+    /** Plain left-to-right, top-to-bottom sweep. */
+    public static final int FILL_ROW_MAJOR = 1;
+
+    // ---------------------------------------------------------- edge slipping
+
+    /** Every placed edge must match; the search is exact. */
+    public static final int SLIP_NONE      = 0;
+    /** Blackwood's published ceiling: one more break every few depths from 201. */
+    public static final int SLIP_BLACKWOOD = 1;
+    /** Verhaard's ceiling: starts sooner at 193 and rises to 12 by depth 240. */
+    public static final int SLIP_VERHAARD  = 2;
+
     // ---------------------------------------------------------- cell ordering
 
     /** Always take the empty cell with the fewest candidates. */
@@ -60,6 +83,10 @@ public final class SolverConfig {
 
     // ------------------------------------------------------------------ values
 
+    public int     engine              = ENGINE_MRV;
+    public int     fillOrder           = FILL_BANDED;
+    /** How many mismatched edges {@link ScanSolver} may leave, by depth. */
+    public int     slipSchedule        = SLIP_NONE;
     public int     cellOrder           = CELL_MRV;
     /** Hybrid switches to lowest-index once the MRV minimum exceeds this. */
     public int     hybridThreshold     = 4;
@@ -86,6 +113,9 @@ public final class SolverConfig {
 
     public SolverConfig copy() {
         SolverConfig c = new SolverConfig();
+        c.engine = engine;
+        c.fillOrder = fillOrder;
+        c.slipSchedule = slipSchedule;
         c.cellOrder = cellOrder;
         c.hybridThreshold = hybridThreshold;
         c.tieBreak = tieBreak;
@@ -104,6 +134,38 @@ public final class SolverConfig {
     }
 
     // -------------------------------------------------- string <-> int mapping
+
+    public static int parseEngine(String s) {
+        if (s == null) return ENGINE_MRV;
+        if (s.equals("scan")) return ENGINE_SCAN;
+        return ENGINE_MRV;
+    }
+    public static String engineName(int v) {
+        if (v == ENGINE_SCAN) return "scan";
+        return "mrv";
+    }
+
+    public static int parseFillOrder(String s) {
+        if (s == null) return FILL_BANDED;
+        if (s.equals("rowMajor")) return FILL_ROW_MAJOR;
+        return FILL_BANDED;
+    }
+    public static String fillOrderName(int v) {
+        if (v == FILL_ROW_MAJOR) return "rowMajor";
+        return "banded";
+    }
+
+    public static int parseSlipSchedule(String s) {
+        if (s == null) return SLIP_NONE;
+        if (s.equals("blackwood")) return SLIP_BLACKWOOD;
+        if (s.equals("verhaard")) return SLIP_VERHAARD;
+        return SLIP_NONE;
+    }
+    public static String slipScheduleName(int v) {
+        if (v == SLIP_BLACKWOOD) return "blackwood";
+        if (v == SLIP_VERHAARD) return "verhaard";
+        return "none";
+    }
 
     public static int parseCellOrder(String s) {
         if (s == null) return CELL_MRV;
@@ -195,6 +257,9 @@ public final class SolverConfig {
     public String toJson() {
         StringBuilder sb = new StringBuilder();
         sb.append('{');
+        sb.append("\"engine\":\"").append(engineName(engine)).append("\",");
+        sb.append("\"fillOrder\":\"").append(fillOrderName(fillOrder)).append("\",");
+        sb.append("\"slipSchedule\":\"").append(slipScheduleName(slipSchedule)).append("\",");
         sb.append("\"cellOrder\":\"").append(cellOrderName(cellOrder)).append("\",");
         sb.append("\"hybridThreshold\":").append(hybridThreshold).append(',');
         sb.append("\"tieBreak\":\"").append(tieBreakName(tieBreak)).append("\",");
@@ -229,7 +294,10 @@ public final class SolverConfig {
     }
 
     public void apply(String k, String v) {
-        if (k.equals("cellOrder")) cellOrder = parseCellOrder(v);
+        if (k.equals("engine")) engine = parseEngine(v);
+        else if (k.equals("fillOrder")) fillOrder = parseFillOrder(v);
+        else if (k.equals("slipSchedule")) slipSchedule = parseSlipSchedule(v);
+        else if (k.equals("cellOrder")) cellOrder = parseCellOrder(v);
         else if (k.equals("hybridThreshold")) hybridThreshold = clampInt(v, 1, 4096, hybridThreshold);
         else if (k.equals("tieBreak")) tieBreak = parseTieBreak(v);
         else if (k.equals("valueOrder")) valueOrder = parseValueOrder(v);

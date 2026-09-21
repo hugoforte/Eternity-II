@@ -308,6 +308,10 @@ def _setting_effects(attempts):
 
     One card per setting that has a real spread.  This is the headline
     analysis: it tells the user which knobs matter.
+
+    An attempt only counts toward a setting it could have influenced
+    (``schema.is_active``), so the support a card reports -- and the support a
+    lesson inherits from it -- is the number of *relevant* attempts.
     """
     adjusted = _adjusted_scores(attempts)
 
@@ -317,7 +321,7 @@ def _setting_effects(attempts):
         cfg = a.get('config') or {}
         for setting in schema.tunable_settings():
             key = setting['key']
-            if key not in cfg:
+            if key not in cfg or not schema.is_active(key, cfg):
                 continue
             arm = _arm_key(schema.coerce(key, cfg[key]))
             value = adj if key != 'nodeBudget' else _score_of(a)
@@ -410,6 +414,9 @@ def _setting_interactions(attempts):
     combination with enough samples, the observed mean *and* the additive
     prediction from each marginal.  A large gap with enough data is an
     interaction - a combo that is *especially* good or *especially* bad.
+
+    A pair is only measured over attempts where *both* settings were active,
+    for the same reason the per-setting analysis is.
     """
     adjusted = _adjusted_scores(attempts)
     # skip nodeBudget: it's the thing we're controlling for
@@ -420,9 +427,10 @@ def _setting_interactions(attempts):
     # marginal means per (key, arm)
     margin = defaultdict(lambda: defaultdict(list))
     for a, adj in adjusted:
+        cfg = a.get('config') or {}
         for key in keys:
-            v = (a.get('config') or {}).get(key)
-            if v is None:
+            v = cfg.get(key)
+            if v is None or not schema.is_active(key, cfg):
                 continue
             margin[key][_arm_key(schema.coerce(key, v))].append(adj)
     marginal_mean = {k: {arm: _mean(vs) for arm, vs in d.items()}
@@ -436,6 +444,8 @@ def _setting_interactions(attempts):
             for k2 in keys[i + 1:]:
                 v1 = cfg.get(k1); v2 = cfg.get(k2)
                 if v1 is None or v2 is None:
+                    continue
+                if not (schema.is_active(k1, cfg) and schema.is_active(k2, cfg)):
                     continue
                 arm1 = _arm_key(schema.coerce(k1, v1))
                 arm2 = _arm_key(schema.coerce(k2, v2))

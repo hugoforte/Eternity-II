@@ -25,18 +25,29 @@ from db import Db       # noqa: E402
 from lessons import LessonManager, LESSON_STREAK, RETIRE_STREAK   # noqa: E402
 
 
+def _plausible_edges(best_depth):
+    """A stand-in edge count for a board of that depth.
+
+    A compact region of d pieces joins up roughly 2d of the 480 internal
+    edges, and a full board joins all of them.
+    """
+    return min(2 * best_depth, 480)
+
+
 def _seed_attempt(db, *, config_overrides=None, best_depth=100,
-                  nodes=250000, restarts=0, samples=None, placements=None,
-                  status='budget', solved=False):
+                  matched_edges=None, nodes=250000, restarts=0, samples=None,
+                  placements=None, status='budget', solved=False):
     cfg = schema.defaults()
     if config_overrides:
         cfg.update(config_overrides)
+    if matched_edges is None:
+        matched_edges = _plausible_edges(best_depth)
     aid = db.start_attempt(cfg, False, "tuner")
     db.finish_attempt(
         aid, status=status, solved=solved, valid=True,
-        best_depth=best_depth, nodes=nodes, duration_ms=int(nodes / 250),
-        nodes_per_sec=250_000, restarts=restarts,
-        score=tuner_mod.score_attempt(best_depth, nodes,
+        best_depth=best_depth, matched_edges=matched_edges, nodes=nodes,
+        duration_ms=int(nodes / 250), nodes_per_sec=250_000, restarts=restarts,
+        score=tuner_mod.score_attempt(matched_edges, nodes,
                                       cfg.get('nodeBudget'), solved),
         order=placements or [], samples=samples or [])
     return aid
@@ -90,6 +101,26 @@ class AnalyzerTest(AnalyticsBaseTest):
         self.assertEqual(f['rule']['value'], 'mrv')
         self.assertGreaterEqual(f['strength'], MIN_STRENGTH)
         self.assertEqual(f['visual']['kind'], 'diverging_bars')
+
+    def test_support_counts_only_attempts_a_setting_could_affect(self):
+        """hybridThreshold does nothing unless the cell order is hybrid."""
+        for _ in range(6):
+            _seed_attempt(self.db, config_overrides={'cellOrder': 'hybrid',
+                                                     'hybridThreshold': 1},
+                          best_depth=150)
+            _seed_attempt(self.db, config_overrides={'cellOrder': 'hybrid',
+                                                     'hybridThreshold': 64},
+                          best_depth=210)
+        for _ in range(30):
+            _seed_attempt(self.db, config_overrides={'cellOrder': 'mrv',
+                                                     'hybridThreshold': 64},
+                          best_depth=180)
+        result = self.analyzer.run()
+        matches = [f for f in result['findings']
+                   if f['id'] == 'setting_hybridThreshold']
+        self.assertTrue(matches, 'expected a setting_hybridThreshold finding')
+        self.assertEqual(matches[0]['support'], 12,
+                         'only the hybrid attempts are relevant evidence')
 
     def test_strength_is_clamped_to_something_readable(self):
         """z blows up when two groups are totally separable; clamp kicks in."""

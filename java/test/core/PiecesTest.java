@@ -60,6 +60,27 @@ public final class PiecesTest {
         // --- the grey budget is exactly the number of border sides ----------
         T.eq("total grey sides equals 4*16 border sides", 4 * 16, greyTotal);
 
+        // --- colour parity ---------------------------------------------------
+        // Every colour occurs an even number of times as a side.  That is what
+        // makes a board one edge short of perfect impossible: a lone mismatch
+        // would leave two colours with an odd number of unmatched sides.
+        int[] colourCount = new int[23];
+        for (int i = 0; i < 256; i++) {
+            for (int s = 0; s < 4; s++) colourCount[pieces[i][s]]++;
+        }
+        int oddColours = 0, borderColours = 0, interiorColours = 0;
+        for (int c = 0; c < colourCount.length; c++) {
+            if (colourCount[c] % 2 != 0) oddColours++;
+        }
+        for (int c = 1; c < colourCount.length; c++) {
+            if (colourCount[c] == 24) borderColours++;
+            else if (colourCount[c] == 48 || colourCount[c] == 50) interiorColours++;
+        }
+        T.eq("no colour appears an odd number of times as a side", 0, oddColours);
+        T.eq("grey appears 64 times, once per border side", 64, colourCount[0]);
+        T.eq("5 border colours appear 24 times each", 5, borderColours);
+        T.eq("17 interior colours appear 48 or 50 times each", 17, interiorColours);
+
         // --- the fixed piece ------------------------------------------------
         int p139 = Sides.pack(pieces[138]);
         T.eq("piece 139 stored sides are {l=6,t=16,r=16,b=8}",

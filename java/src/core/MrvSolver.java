@@ -35,7 +35,7 @@ package core;
  * Masks are stored word-major (cellMask[w * cells + cell]) so the per-placement
  * sweep over cells for a single word is contiguous.
  */
-public final class MrvSolver {
+public final class MrvSolver implements Search {
 
     public static final int GREY = Sides.GREY;
 
@@ -105,6 +105,8 @@ public final class MrvSolver {
     public boolean aborted;
     public int restarts;
     public int[] bestBoard;
+    /** Matched internal edges of {@link #bestBoard}, out of 480 on Eternity II. */
+    public int bestMatchedEdges;
     public int[] solutionBoard;
     /** Cells of the deepest board, in the order they were placed. */
     public int[] bestOrderCells;
@@ -218,6 +220,7 @@ public final class MrvSolver {
         nodes = 0;
         solutions = 0;
         bestPlaced = 0;
+        bestMatchedEdges = 0;
         aborted = false;
         restarts = 0;
         bestBoard = null;
@@ -583,6 +586,7 @@ public final class MrvSolver {
             if (solutionBoard == null) solutionBoard = new int[cells];
             System.arraycopy(boardVariant, 0, solutionBoard, 0, cells);
             recordBest();
+            if (listener != null) listener.onSolution(this);
             if (verbose) System.out.println("solution #" + solutions + " at node " + nodes);
             return stopAtFirstSolution;
         }
@@ -657,10 +661,13 @@ public final class MrvSolver {
         return false;
     }
 
-    /** Snapshot the current board plus the order its pieces were placed. */
+    /** Snapshot the current board, its score, and the order it was placed in. */
     private void recordBest() {
         if (bestBoard == null) bestBoard = new int[cells];
         System.arraycopy(boardVariant, 0, bestBoard, 0, cells);
+        // A board is recorded at most once per depth, so counting its edges
+        // here keeps the score out of the search loop entirely.
+        bestMatchedEdges = Validator.matchedEdges(inst, bestBoard);
         if (bestOrderCells == null) {
             bestOrderCells = new int[cells];
             bestOrderVariants = new int[cells];
@@ -831,6 +838,26 @@ public final class MrvSolver {
 
     // ------------------------------------------------------------------ accessors
 
+    // --- Search -------------------------------------------------------------
+
+    public void setListener(SolveListener l) { this.listener = l; }
+    public void setSampleEveryNodes(long n) { this.sampleEveryNodes = n; }
+    public void setStopAtFirstSolution(boolean stop) { this.stopAtFirstSolution = stop; }
+    /** Bring the search to a halt at its next node; see {@link Search#requestStop}. */
+    public void requestStop() { this.maxNodes = 1; }
+    public long nodes() { return nodes; }
+    public int bestPlaced() { return bestPlaced; }
+    public int bestMatchedEdges() { return bestMatchedEdges; }
+    /** Always 0: this engine only ever places a piece that matches on every side. */
+    public int bestBreaks() { return 0; }
+    public int restarts() { return restarts; }
+    public boolean aborted() { return aborted; }
+    public int[] bestBoard() { return bestBoard; }
+    public int[] solutionBoard() { return solutionBoard; }
+    public int[] bestOrderCells() { return bestOrderCells; }
+    public int[] bestOrderVariants() { return bestOrderVariants; }
+    public int bestOrderLength() { return bestOrderLength; }
+
     public int variantAt(int cell) { return boardVariant[cell]; }
     public int pieceAt(int cell) { return boardVariant[cell] < 0 ? -1 : boardVariant[cell] >>> 2; }
     public int rotAt(int cell) { return boardVariant[cell] < 0 ? -1 : boardVariant[cell] & 3; }
@@ -915,7 +942,9 @@ public final class MrvSolver {
             System.out.println("validation: " + (err == null ? "OK" : err));
         } else {
             System.out.println("no solution found; deepest board reached ("
-                + s.bestPlaced + "/" + s.cells + " pieces)");
+                + s.bestPlaced + "/" + s.cells + " pieces, "
+                + s.bestMatchedEdges + "/"
+                + Validator.internalEdgeTotal(s.inst) + " matched edges)");
             if (s.bestBoard != null) {
                 StringBuilder sb = new StringBuilder();
                 for (int r = 0; r < s.n; r++) {

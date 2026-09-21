@@ -57,7 +57,7 @@ Useful variations:
 
 ```sh
 sh build.sh                          # compile only
-sh test.sh                           # run the Java solver test suite (958 checks)
+sh test.sh                           # run the Java solver test suite (1119 checks)
 python3 server/test_server.py        # run the server test suite (45 tests)
 
 python3 server/app.py --port 9000    # different port
@@ -199,14 +199,20 @@ attempts look brilliant. The analyser therefore compares each setting **only
 against attempts of the same length**, and the charts show that adjusted
 figure: *pieces better or worse than a typical run of the same length*.
 
+Settings that only apply in some modes are judged the same way. Restart growth
+is read by the geometric policy alone, so attempts under any other policy are
+not counted as evidence about it, and the support figure beside a finding is
+the number of attempts the setting could really have changed.
+
 ## 5. How the learning works
 
 Two layers, kept deliberately separate:
 
 **The tuner** runs in the background after every attempt. It treats each
 setting as an independent multi-armed bandit over its discrete choices,
-scores attempts by best depth (with a mild efficiency bonus and a large
-bonus for a real solve), and uses **UCB1** to pick the value for the next
+scores attempts by **matched edges out of 480** — the measure Eternity II
+results are quoted in — with a mild efficiency bonus and a large bonus for a
+real solve, and uses **UCB1** to pick the value for the next
 automatic attempt — so untried values get tried and promising ones get
 repeated. An occasional random nudge stops it settling too early.
 **Optimal settings** (the button and the UI defaults) is the greedy view of

@@ -392,6 +392,18 @@ class Supervisor:
         best_depth = int(end.get("best", 0))
         nodes = int(end.get("nodes", 0))
         solved = bool(end.get("solved", False))
+        breaks = int(end.get("breaks") or 0)
+        if solved and breaks > 0:
+            # "Solved" means a perfect board and nothing else. Edge slipping
+            # finishes boards that carry deliberate mismatches, and recording
+            # one of those as a solve would be worse than never having the
+            # feature, so the engine's claim is cross-checked here rather than
+            # taken on trust -- and refused out loud when it does not hold.
+            sys.stderr.write(
+                "engine claimed attempt %d solved with %d broken edges; "
+                "recording it as unsolved. A solved board matches every edge, "
+                "so this is an engine bug\n" % (attempt_id, breaks))
+            solved = False
         status = end.get("status", "completed")
         if status == "stopped":
             # The run was cut short by the user (settings change, skip, pause).
@@ -404,8 +416,20 @@ class Supervisor:
                     self.live["running"] = False
                 return
             status = "aborted"
-        score = tuner_mod.score_attempt(best_depth, nodes,
-                                        config.get("nodeBudget"), solved)
+        matched_edges = end.get("edges")
+        if matched_edges is None:
+            # An engine older than the edge-scoring protocol. Keep the attempt
+            # for replay, but say so loudly and store no score: a zero would
+            # read to the learner as the worst board ever seen.
+            sys.stderr.write(
+                "engine reported no matched-edge count for attempt %d; rebuild "
+                "the engine with build.sh. The attempt is stored but cannot be "
+                "used for learning\n" % attempt_id)
+            score = 0.0
+        else:
+            matched_edges = int(matched_edges)
+            score = tuner_mod.score_attempt(matched_edges, nodes,
+                                            config.get("nodeBudget"), solved)
 
         self.db.finish_attempt(
             attempt_id,
@@ -413,6 +437,7 @@ class Supervisor:
             solved=solved,
             valid=bool(end.get("valid", True)),
             best_depth=best_depth,
+            matched_edges=matched_edges,
             nodes=nodes,
             duration_ms=int(end.get("ms", 0)),
             nodes_per_sec=int(end.get("nps", 0)),

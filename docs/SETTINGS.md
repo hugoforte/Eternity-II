@@ -17,25 +17,81 @@ Do not edit it by hand; change the schema and regenerate.
   reachable on purpose: part of the fun is watching a setting fail.
 * **Learned** says whether the built-in learner is allowed to tune the value.
   The random seed is excluded, because it is noise rather than strategy.
+* **Only has an effect when ...** marks a setting that depends on another one.
+  Attempts where the condition did not hold are not counted as evidence about
+  it, so what the Insights tab says about it is based on the runs it could
+  really have changed.
 
 ## A note on safety
 
-No setting can break the rules of the puzzle. Board size, the piece set and the
-mandatory hint piece (139 at row 8, column 7) are fixed, and every placement is
-still checked for matching edges. The worst a setting can do is make the search
-slow, or make it incomplete so it can never find a full solution --
-`Choices per square = 1` is the clearest example, and it is labelled as such.
+No setting can change the puzzle. Board size, the piece set and the mandatory
+hint piece (139 at row 8, column 7) are fixed, every piece is used at most
+once, and no setting can put a colour against the border.
+
+What a setting can change is what counts as good enough. `Edge slipping` lets
+the solver leave a bounded number of squares deliberately mismatched so it can
+keep going where an exact search would have to back up; those boards are scored
+honestly on matched edges, and a board with any mismatch is never reported as
+solved. A setting can also make the search slow, or make it incomplete so it
+can never find a full solution -- `Choices per square = 1` is the clearest
+example, and it is labelled as such.
 
 ---
 
 
 ## Search strategy
 
+### Engine
+
+`engine` &middot; choice &middot; learned automatically
+
+Which search engine runs the attempt. They obey different settings.
+
+| Choice | What it does |
+|---|---|
+| **Most-constrained** | Picks the hardest square each step and prunes hard. ~1.4M steps/sec. |
+| **Fixed scan** | Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further, but runs the same way every time. |
+
+Default: **Most-constrained** (`mrv`)
+
+### Fill order
+
+`fillOrder` &middot; choice &middot; learned automatically
+
+Fixed scan only: the route the solver takes across the board.
+
+Only has an effect when Engine is **Fixed scan**.
+
+| Choice | What it does |
+|---|---|
+| **Banded** | Row scan, then a narrowed scan, then the bottom band column by column, then nested L-shapes. A mistake surfaces sooner where the search is deepest. |
+| **Plain rows** | Straight left-to-right, top-to-bottom. Simplest route, longest wait before a mistake shows. |
+
+Default: **Banded** (`banded`)
+
+### Edge slipping
+
+`slipSchedule` &middot; choice &middot; learned automatically
+
+Fixed scan only: how many edges the solver may leave deliberately mismatched, and from how deep into the board.
+
+Only has an effect when Engine is **Fixed scan**.
+
+| Choice | What it does |
+|---|---|
+| **Never** | Every placed edge must match. Exact, but the board can never score above the best perfect start it happens to find. |
+| **Blackwood** | One mismatch allowed from square 201, rising to ten by square 239. The published schedule behind the best known result. |
+| **Verhaard** | Starts at square 193 and allows twelve by square 240. More generous, and measured further on this engine. |
+
+Default: **Blackwood** (`blackwood`)
+
 ### Cell order
 
 `cellOrder` &middot; choice &middot; learned automatically
 
 How the solver picks which empty square to fill next.
+
+Only has an effect when Engine is **Most-constrained**.
 
 | Choice | What it does |
 |---|---|
@@ -50,6 +106,8 @@ Default: **Most constrained** (`mrv`)
 `hybridThreshold` &middot; slider &middot; learned automatically
 
 Hybrid mode only: use most-constrained while the best square has at most this many choices.
+
+Only has an effect when Cell order is **Hybrid**.
 
 Range: `1` to `64` in steps of `1`
 
@@ -66,6 +124,8 @@ Default: `4`
 
 Which square wins when several are equally constrained.
 
+Only has an effect when Cell order is **Most constrained** or **Hybrid**.
+
 | Choice | What it does |
 |---|---|
 | **Most neighbours** | Prefer squares already surrounded. Keeps the filled area compact. |
@@ -81,6 +141,8 @@ Default: **Most neighbours** (`mostNeighbours`)
 `startCell` &middot; choice &middot; learned automatically
 
 Which square the solver is forced to fill first.
+
+Only has an effect when Engine is **Most-constrained**.
 
 | Choice | What it does |
 |---|---|
@@ -101,6 +163,8 @@ Default: **Let it choose** (`auto`)
 
 The order in which candidate pieces are tried in a square.
 
+Only has an effect when Engine is **Most-constrained**.
+
 | Choice | What it does |
 |---|---|
 | **Natural** | Piece number order. Deterministic and cache friendly. |
@@ -116,6 +180,8 @@ Default: **Natural** (`natural`)
 
 How much randomness is mixed into the piece order.
 
+Only has an effect when Engine is **Most-constrained**.
+
 Range: `0` to `100` in steps of `5`
 
 | End of the slider | What happens |
@@ -130,6 +196,8 @@ Default: `0`
 `candidateCap` &middot; stepped slider &middot; learned automatically
 
 Maximum number of pieces tried in any one square before giving up on it.
+
+Only has an effect when Engine is **Most-constrained**.
 
 Range: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024
 
@@ -147,6 +215,8 @@ Default: `1024`
 `forwardCheck` &middot; choice &middot; learned automatically
 
 How hard the solver looks for dead ends before committing.
+
+Only has an effect when Engine is **Most-constrained**.
 
 | Choice | What it does |
 |---|---|
@@ -177,6 +247,8 @@ Default: `on`
 
 Abandon and restart the search to escape an unlucky early choice.
 
+Only has an effect when Engine is **Most-constrained**.
+
 | Choice | What it does |
 |---|---|
 | **Never** | One long search. |
@@ -192,6 +264,8 @@ Default: **Never** (`none`)
 
 Nodes in the first run before the first restart.
 
+Only has an effect when Restart policy is **Fixed**, **Geometric** or **Luby**.
+
 Range: 1k, 5k, 10k, 50k, 100k, 500k, 1M, 5M
 
 | End of the slider | What happens |
@@ -206,6 +280,8 @@ Default: `100k`
 `restartMultiplier` &middot; slider &middot; learned automatically
 
 Geometric policy only: each run is this much longer than the last (percent).
+
+Only has an effect when Restart policy is **Geometric**.
 
 Range: `110` to `400` in steps of `10`
 
