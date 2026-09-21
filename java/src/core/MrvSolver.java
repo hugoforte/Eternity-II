@@ -514,7 +514,7 @@ public final class MrvSolver implements Search {
         } else {
             int k = 0;
             while (true) {
-                long budget = restartBudget(k);
+                long budget = cfg.restartBudget(k);
                 restartNodeCap = nodes + budget;
                 if (restartNodeCap > cap) restartNodeCap = cap;
                 restartHit = false;
@@ -549,34 +549,6 @@ public final class MrvSolver implements Search {
         long cap = maxNodes;
         if (cfg.nodeBudget < cap) cap = cfg.nodeBudget;
         return cap;
-    }
-
-    private long restartBudget(int k) {
-        if (cfg.restartPolicy == SolverConfig.RESTART_FIXED) return cfg.restartBase;
-        if (cfg.restartPolicy == SolverConfig.RESTART_GEOMETRIC) {
-            double f = Math.pow(cfg.restartMultiplier / 100.0, k);
-            double v = cfg.restartBase * f;
-            if (v > 1e15) return (long) 1e15;
-            return (long) v;
-        }
-        if (cfg.restartPolicy == SolverConfig.RESTART_LUBY) {
-            return cfg.restartBase * luby(k + 1);
-        }
-        return Long.MAX_VALUE;
-    }
-
-    /** Classic Luby sequence: 1,1,2,1,1,2,4,1,... */
-    private static long luby(int i) {
-        int k = 1;
-        while (true) {
-            int pow = (1 << k) - 1;
-            if (pow == i) return 1L << (k - 1);
-            if (pow > i) break;
-            k++;
-        }
-        k = 1;
-        while (((1 << k) - 1) < i) k++;
-        return luby(i - (1 << (k - 1)) + 1);
     }
 
     /** @return true when the caller should stop descending. */

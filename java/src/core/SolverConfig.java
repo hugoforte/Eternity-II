@@ -133,6 +133,48 @@ public final class SolverConfig {
         return c;
     }
 
+    // --------------------------------------------------------- restart budget
+
+    /**
+     * How many nodes the {@code k}-th run of a restarting search may spend,
+     * counting from {@code k = 0} for the first run.
+     *
+     * Both engines restart on this one schedule.  The published guidance is
+     * that the cutoff schedule matters far less than re-randomising on
+     * restart, so there is nothing here worth having two of: {@link MrvSolver}
+     * re-shuffles its value order and {@link ScanSolver} re-shuffles its
+     * candidate index, and both ask this for their next cutoff.
+     *
+     * {@link #RESTART_NONE} means one unbounded run.
+     */
+    public long restartBudget(int k) {
+        if (restartPolicy == RESTART_FIXED) return restartBase;
+        if (restartPolicy == RESTART_GEOMETRIC) {
+            double f = Math.pow(restartMultiplier / 100.0, k);
+            double v = restartBase * f;
+            if (v > 1e15) return (long) 1e15;
+            return (long) v;
+        }
+        if (restartPolicy == RESTART_LUBY) {
+            return restartBase * luby(k + 1);
+        }
+        return Long.MAX_VALUE;
+    }
+
+    /** Classic Luby sequence: 1,1,2,1,1,2,4,1,... */
+    private static long luby(int i) {
+        int k = 1;
+        while (true) {
+            int pow = (1 << k) - 1;
+            if (pow == i) return 1L << (k - 1);
+            if (pow > i) break;
+            k++;
+        }
+        k = 1;
+        while (((1 << k) - 1) < i) k++;
+        return luby(i - (1 << (k - 1)) + 1);
+    }
+
     // -------------------------------------------------- string <-> int mapping
 
     public static int parseEngine(String s) {
