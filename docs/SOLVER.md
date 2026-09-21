@@ -10,17 +10,19 @@ The solver is a plain Java program; the web app is only a front end for it.
 
 ```sh
 sh build.sh                                   # compile into java/classes
-sh test.sh                                    # 1119 checks, a few seconds
+sh test.sh                                    # 1243 checks, a few seconds
 
 java -cp java/classes core.MrvSolver          # MRV solver on Eternity II
 java -cp java/classes core.MrvSolver 50000000 # stop after 50M steps
 java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
+java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
 java -cp java/classes core.Bench engines 20   # the two engines, 20s each
 java -cp java/classes core.Bench slip         # edge slipping off vs on, equal nodes
 java -cp java/classes core.Bench order        # fill-order frontiers, no search
+java -cp java/classes core.Bench seeds 20 100000000   # 20 seeds at one budget
 java -cp java/classes core.AllTests           # the test suite
 java -cp java/classes app.Engine --nodeBudget=300000   # the JSONL engine, by hand
 ```
@@ -193,6 +195,58 @@ and a partial one scores the edges the order has joined up so far, less its brea
 used for the reported score: `Validator.matchedEdges` counts the board independently, and the tests
 compare the two.
 
+### 6. A seed, and restarts
+
+Everything above is decided by the instance, so the engine as described runs **one descent and
+repeats it for ever**: the same configuration produces the same board at ten seconds and at ten
+minutes. A ten-minute run measured on this engine found its best board at 70 seconds and produced
+nothing in the remaining 530, and eight cores gave a best-of-four, because only four configurations
+existed to give it. An engine that cannot produce a second opinion cannot be sampled, and a lab that
+cannot sample has no distribution to learn from.
+
+**The seed reorders the candidate index, and nothing else.** A key's candidates are already a
+contiguous run of `(word, mask)` pairs, so the run is simply permuted at construction. The search
+reads the same two arrays through the same two indices either way, so **the inner loop is untouched**
+— 47.2M nodes/sec before the change against 47.4M after, best of three runs at a 100M budget with
+slipping off, reaching the identical board.
+Reordering a run cannot add or remove a candidate, so no seed can change which boards exist; the test
+suite enumerates small instances under three seeds and compares the solution sets, and the node
+counts, against the unseeded engine.
+
+A permutation was chosen over the other cheap option, a seeded starting offset into each run. Both
+are built once and neither is visible from the hot loop, so the permutation is free: a run of length
+L has L rotations against L! permutations.
+
+**What a run permutation cannot reach is the order inside one `(word, mask)` pair.** A word holds
+sixteen pieces and a piece's four rotations share a nibble, so candidates that land in the same word
+keep their relative order. On Eternity II, 467 keys offer anything at all, 263 offer a real choice of
+two candidates or more, and 203 of those spread the choice over more than one entry — so about four
+keys in five are reorderable and the rest are fixed. Rotating the mask inside the loop would reach
+the remainder, at the cost of two instructions on every candidate examined; it was not worth it,
+because the seeds already differ by a lot (below). One visible consequence: the four corner pieces
+are the four lowest variants and share a word, so **the opening move is the same for every seed**.
+
+**`shuffleStrength` means something different here than in `MrvSolver`.** There it buys transpositions
+in proportion to the length of one cell's candidate list, which is long. A key here holds one to six
+entries, so the same formula rounds to zero swaps below a strength of 17 — measurably nothing. What
+is a useful dial is how much of the natural order survives, so a strength of s per cent fully
+scrambles s per cent of the keys and leaves the rest exactly as they were. The distinction matters:
+the natural order turns out to be a *good* order, and scrambling all of it is worse than scrambling a
+twentieth of it.
+
+**Restarts reuse `MrvSolver`'s schedule, moved to `SolverConfig.restartBudget` so there is one copy
+of it.** `fixed`, `geometric` and `luby` with `restartBase` and `restartMultiplier` mean exactly what
+they meant before. On restart the engine re-shuffles the candidate index from the advanced random
+stream rather than merely emptying the board — the published guidance is that the cutoff schedule
+barely matters and that re-randomising on restart is what does the work, and a restart that only
+emptied the board would walk the identical tree again. The deepest board survives a restart: it is
+only ever replaced by a better one.
+
+Restarts are skipped in two cases, both deliberate and both asserted by the tests rather than left to
+be discovered. Without randomness there is nothing to re-draw, so `restartPolicy` alone does nothing
+and `restarts()` stays 0. And an exhaustive enumeration never restarts, because after a restart the
+search has no record of the solutions it already reported and would count them twice.
+
 ---
 
 ## Measured results
@@ -255,9 +309,60 @@ costs a further 2-8%, and the extra depth pays for that many times over.
 **Verhaard's schedule beats Blackwood's on this engine at every budget measured**, by 10 to 30
 matched edges. That is not what was expected — Blackwood's is the schedule behind the best
 published result — and it is reported rather than acted on: the default stays at `blackwood`
-because it is the published one, and the learner is free to move. The likely reason is that this
-search has no restarts, so a schedule that unlocks its first break sooner gets more out of the one
-deterministic descent it is given.
+because it is the published one, and the learner is free to move. The likely reason was that this
+search had no restarts, so a schedule that unlocks its first break sooner gets more out of the one
+deterministic descent it is given. Restarts now exist (section 6) and re-testing the two schedules
+under them has not been done.
+
+### What a seed is worth, Eternity II, 20 seeds at 100M nodes each
+
+`slipSchedule=verhaard`, single-threaded, seeds 1–20, everything else at its default. The last
+column counts how many of the twenty boards were distinct, because a variation feature that quietly
+did nothing would look exactly like a good one in every other column.
+
+| candidate order | pieces min / median / max | edges min / median / max | distinct boards |
+|---|---|---|---|
+| unseeded (`natural`) | — 245 — | — 446 — | 1 |
+| `reverse` | — 243 — | — 442 — | 1 |
+| `shuffleStrength=5` | 242 / 245 / **247** | 440 / 446 / **450** | 12 / 20 |
+| `shuffleStrength=10` | 242 / 245 / **247** | 440 / 446 / **450** | 16 / 20 |
+| `shuffleStrength=25` | **243** / 245 / **247** | **442** / 446 / **450** | **20 / 20** |
+| `shuffleStrength=50` | 241 / 245 / 246 | 438 / 446 / 448 | 20 / 20 |
+| `shuffleStrength=100` | 225 / 244 / **247** | 412 / 444 / **450** | 20 / 20 |
+| `valueOrder=random` | 231 / 243 / 246 | 422 / 442 / 448 | 20 / 20 |
+
+**The seed is worth a great deal, and the amount of it matters more than the seed does.** At a
+strength of 25 every one of the twenty seeds found a different board, the worst of them was 243
+pieces and the best 247 — so the engine that could only ever say 245 now samples a range, and the
+best of twenty beats the single run by **+2 pieces and +4 edges**.
+
+**The natural order is a good order, not an arbitrary one.** It scores 245 at this budget, which is
+the *median* of a strength-25 sample and above the median of a fully scrambled one. Destroying all
+of it costs 14 pieces off the bottom of the range. That is the reason `shuffleStrength` reorders
+a share of the keys rather than a share of each key: the useful setting is a light touch.
+
+**A cheap second opinion needs no randomness at all.** `valueOrder=reverse` reaches 243/442 — a
+different descent for free, and a second deterministic configuration where there were four.
+
+### The same 20 seeds at 1B nodes, where sampling starts to stop paying
+
+`java -cp java/classes core.Bench seeds 20 1000000000 25`, about 22 seconds a seed:
+
+| budget | unseeded | seeds min / median / max | spread | best of 20 |
+|---|---|---|---|---|
+| 100M | 245 / 446 | 243 / 245 / 247 | 4 pieces, 8 edges | 247 / 450 |
+| 1B | 247 / 450 | 246 / 247 / 248 | **2 pieces, 4 edges** | **248 / 452** |
+
+**The spread narrows as the budget grows, and that is the finding that decides how to spend a core.**
+Ten times the budget halved the distance between the luckiest seed and the unluckiest: the seeds are
+converging on the same place, so the marginal value of a second opinion falls the longer each opinion
+is allowed to think. At 100M the best of twenty is worth +2 pieces over the single run; at 1B it is
+worth +1. Best-of-N is real, and it is not a substitute for a longer run.
+
+Neither budget reaches the 249 pieces / 454 edges the lab has recorded from ten-minute attempts,
+which is roughly 26B nodes — about 26 times the largest budget measured here. **No claim is made
+about beating that number**, because it was not run at that budget; what is measured is that at
+equal budget, sampling beats the one descent, by a margin that shrinks as the budget rises.
 
 ### Fill orders, measured without running a search
 
@@ -324,7 +429,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 
 ## The test suite
 
-`java -cp out core.AllTests` → **1119 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
+`java -cp out core.AllTests` → **1243 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
 60-line assertion helper so the suite runs with nothing but a JDK. Exits 1 on failure for CI.
 
 | Test file | What it covers |
@@ -339,6 +444,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `MrvSolverTest` | The MRV machinery — see below. |
 | `FillOrderTest` | The fixed orders, structurally: the north-and-west invariant at every size from 2 to 20, the exact phase boundaries of the banded order at 16×16, and both frontier measures. No search is run. |
 | `ScanSolverTest` | What only the scan engine can get wrong: that it places in exactly its fill order, that the hint piece appears where it must and nowhere else, that an impossible fixed placement is rejected with the cell and reason in the message, that the node budget is not overshot, and that a second run of the same solver is identical. |
+| `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
 | `CrossValidationTest` | **The strongest evidence:** exhaustive solution counts vs the naive reference solver, for both fast engines, with slipping off. |
 
@@ -409,15 +515,12 @@ one.
   class once MRV and forward checking are in place.
 * **Parallel search** — the remaining cheap multiplier. Split on the top-left corner piece × rotation and
   give each worker its own `MrvSolver`; state is only ~150 KB per worker. This is the obvious next step.
-* **Randomised restarts.** Backtracking runtimes here are heavy-tailed (see the 8×8/7-colour row, where
-  both orderings fail). Randomised value ordering plus restarts is the standard cure and would likely
-  help more than any further micro-optimisation — at the cost of the determinism the tests rely on.
-* **A varying scan attempt.** `ScanSolver` has no randomness and no restart policy, so every attempt
-  with the same node budget produces the same board, and edge slipping does not change that -- it makes
-  the one deterministic descent go much further, but it is still one descent. That is why `engine` still
-  defaults to `mrv`: the lab learns nothing from repeating a single run. Adding variation looks small:
-  a key's candidates are already contiguous `(word, mask)` pairs, so a seeded starting offset within a
-  run, or a seeded permutation of the per-key runs built once at construction, would give a different
-  descent per seed without putting anything new in the hot loop. Paired with the restart machinery that
-  already exists for `MrvSolver`, that is the obvious next multiplier, and it is deliberately not in
-  this change.
+* **Reaching inside a `(word, mask)` pair.** The seeded permutation reorders a key's entries, which
+  leaves the candidates that share a 64-bit word in their natural relative order — about one key in
+  five on Eternity II, including the opening move. Rotating the mask in the loop would fix it for two
+  instructions per candidate examined. Not done, because the seeds already spread by 16 pieces
+  without it, so the instructions would be spent to buy something that has not been shown to be
+  missing.
+* **Sampling the parallel case.** The distribution above is 20 single-threaded runs; the lab runs
+  eight at once. Whether eight cores are better spent on eight seeds of one configuration or eight
+  configurations of one seed is now a measurable question, and has not been measured.

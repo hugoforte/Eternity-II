@@ -10,6 +10,7 @@ package core;
  *   java -cp out core.Bench budget 20000000  # the same, at equal node count
  *   java -cp out core.Bench slip        # edge slipping off vs on, equal nodes
  *   java -cp out core.Bench order       # fill-order frontiers, no search
+ *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *
  * Several different questions are measured, because they have different
  * answers:
@@ -33,6 +34,16 @@ package core;
  *     equal node counts.  Slipping buys depth at some cost in throughput, and
  *     both halves of that trade have to be shown for the result to mean
  *     anything, so nodes/sec is reported alongside the score.
+ *
+ *  6. "seeds": the same ScanSolver configuration run under many seeds at one
+ *     node budget, reported as a DISTRIBUTION rather than a number.  Every
+ *     other benchmark here reports one run, which is all a deterministic
+ *     engine can give; the question this one answers is how much the seed is
+ *     worth, and it has three parts.  How far apart the seeds land decides
+ *     whether sampling is worth a core at all.  Where the unseeded run sits in
+ *     that spread says whether the natural candidate order was good luck or
+ *     good design.  And the best of N against the single run is the number a
+ *     lab with N cores actually gets.
  */
 public final class Bench {
 
@@ -57,6 +68,14 @@ public final class Bench {
             budgetBenchmark(budget);
         } else if (which.equals("all")) {
             budgetBenchmark(20000000L);
+        }
+        if (which.equals("seeds")) {
+            int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
+            long budget = (args.length > 2) ? parseLong(args[2], 20000000L) : 20000000L;
+            int strength = (args.length > 3) ? (int) parseLong(args[3], 25L) : 25;
+            seedBenchmark(count, budget, strength);
+        } else if (which.equals("all")) {
+            seedBenchmark(8, 5000000L, 25);
         }
     }
 
@@ -184,6 +203,104 @@ public final class Bench {
             }
         }
         System.out.println();
+    }
+
+    // ------------------------------------------------------------- seeds
+
+    /**
+     * How much the seed is worth, as a distribution.
+     *
+     * {@code count} seeds run the same configuration at the same node budget,
+     * so the only difference between them is the candidate order, and the
+     * unseeded run is measured alongside as the reference point.  Everything
+     * is reported: the whole sample, its spread, where the unseeded run falls
+     * inside it, and the best of N.  An engine whose result barely moves with
+     * the seed would show up here as a narrow spread, and that would be worth
+     * knowing -- it is the reason to sample or the reason not to.
+     */
+    private static void seedBenchmark(int count, long budget, int strength) {
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: " + count + " seeds at "
+                           + budget + " nodes each");
+        System.out.println(" slipSchedule=verhaard  shuffleStrength=" + strength);
+        System.out.println("=================================================================");
+        System.out.println(" seed    ms      nodes/sec    placed   edges   breaks");
+
+        int[] placed = new int[count];
+        int[] edges = new int[count];
+        long totalMs = 0, totalNodes = 0;
+        for (int i = 0; i < count; i++) {
+            SolverConfig cfg = seedConfig(strength, i + 1);
+            ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+            s.maxNodes = budget;
+            long t0 = System.nanoTime();
+            s.solve();
+            long ms = (System.nanoTime() - t0) / 1000000L;
+            placed[i] = s.bestPlaced;
+            edges[i] = s.bestMatchedEdges;
+            totalMs += ms;
+            totalNodes += s.nodes;
+            System.out.println(" " + pad("" + (i + 1), 7)
+                + " " + pad("" + ms, 7)
+                + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+                + " " + pad(s.bestPlaced + "/256", 8)
+                + " " + pad(s.bestMatchedEdges + "/480", 7)
+                + " " + s.bestBreaks);
+            String err = Validator.validatePartial(Instance.eternity2(), s.bestBoard,
+                                                   false, s.bestBreaks);
+            if (err != null) System.out.println("   INVALID BOARD: " + err);
+        }
+
+        SolverConfig plain = seedConfig(0, 0);
+        ScanSolver fixed = new ScanSolver(Instance.eternity2(), plain);
+        fixed.maxNodes = budget;
+        long t0 = System.nanoTime();
+        fixed.solve();
+        long fixedMs = (System.nanoTime() - t0) / 1000000L;
+
+        System.out.println();
+        reportSpread("pieces placed", placed, fixed.bestPlaced);
+        reportSpread("matched edges", edges, fixed.bestMatchedEdges);
+        System.out.println();
+        System.out.println(" unseeded run  : " + fixed.bestPlaced + "/256 pieces, "
+            + fixed.bestMatchedEdges + "/480 edges, "
+            + (fixedMs == 0 ? 0 : fixed.nodes * 1000L / fixedMs) + " nodes/sec");
+        System.out.println(" seeded runs   : "
+            + (totalMs == 0 ? 0 : totalNodes * 1000L / totalMs) + " nodes/sec on average");
+        System.out.println(" best of " + count + "  : " + max(placed) + "/256 pieces, "
+            + max(edges) + "/480 edges");
+        System.out.println();
+    }
+
+    /** One seed's configuration: strongest schedule, everything else default. */
+    private static SolverConfig seedConfig(int strength, long seed) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        cfg.shuffleStrength = strength;
+        cfg.randomSeed = seed;
+        return cfg;
+    }
+
+    /** min / median / max of a sample, and where one reference run falls in it. */
+    private static void reportSpread(String label, int[] sample, int reference) {
+        int[] sorted = new int[sample.length];
+        System.arraycopy(sample, 0, sorted, 0, sample.length);
+        java.util.Arrays.sort(sorted);
+        int below = 0;
+        for (int i = 0; i < sorted.length; i++) if (sorted[i] < reference) below++;
+        System.out.println(" " + pad(label, 14)
+            + " min " + pad("" + sorted[0], 6)
+            + " median " + pad("" + sorted[sorted.length / 2], 6)
+            + " max " + pad("" + sorted[sorted.length - 1], 6)
+            + " spread " + pad("" + (sorted[sorted.length - 1] - sorted[0]), 6)
+            + " unseeded beats " + below + "/" + sorted.length);
+    }
+
+    private static int max(int[] v) {
+        int m = v[0];
+        for (int i = 1; i < v.length; i++) if (v[i] > m) m = v[i];
+        return m;
     }
 
     private static void reportEngine(String name, long nodes, long ms, int best, int edges) {
