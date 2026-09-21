@@ -48,6 +48,14 @@ class SchemaTest(unittest.TestCase):
         # These are the values the benchmarking work in the Java suite settled
         # on; if someone changes them the UI's "optimal" cold start changes too.
         d = schema.defaults()
+        # The fixed-scan engine with edge slipping measured well ahead of MRV
+        # at every node budget benchmarked (docs/SOLVER.md); the learner is
+        # free to move off either default once it has attempts of its own.
+        self.assertEqual(d["engine"], "scan")
+        # Verhaard's schedule beat Blackwood's on this engine at every budget
+        # measured, despite Blackwood's being the one behind the best
+        # published result -- see docs/SOLVER.md's edge-slipping section.
+        self.assertEqual(d["slipSchedule"], "verhaard")
         self.assertEqual(d["cellOrder"], "mrv")
         self.assertEqual(d["tieBreak"], "mostNeighbours")
         self.assertEqual(d["valueOrder"], "natural")
@@ -55,9 +63,6 @@ class SchemaTest(unittest.TestCase):
         self.assertTrue(d["greyInteriorPruning"])
         self.assertEqual(d["restartPolicy"], "none")
         self.assertEqual(d["shuffleStrength"], 0)
-        # Blackwood's is the published schedule and the one the scan engine
-        # starts from; the learner is free to move to another.
-        self.assertEqual(d["slipSchedule"], "blackwood")
 
     def test_every_default_is_a_legal_arm(self):
         for setting in schema.SETTINGS:
@@ -106,8 +111,8 @@ class SchemaTest(unittest.TestCase):
 
     def test_a_setting_with_no_dependency_is_always_active(self):
         cfg = schema.defaults()
-        self.assertTrue(schema.is_active("cellOrder", cfg))
         self.assertTrue(schema.is_active("nodeBudget", cfg))
+        self.assertTrue(schema.is_active("greyInteriorPruning", cfg))
 
     def test_restart_growth_only_counts_under_the_geometric_policy(self):
         # MrvSolver.restartBudget() reads restartMultiplier on the geometric
@@ -146,7 +151,10 @@ class SchemaTest(unittest.TestCase):
 
     def test_a_missing_dependency_value_falls_back_to_its_default(self):
         self.assertFalse(schema.is_active("restartMultiplier", {}))
-        self.assertTrue(schema.is_active("cellOrder", {}))
+        # engine's own default is "scan", so an omitted engine falls back to
+        # that: slipSchedule (scan-only) is active, cellOrder (mrv-only) is not.
+        self.assertTrue(schema.is_active("slipSchedule", {}))
+        self.assertFalse(schema.is_active("cellOrder", {}))
 
     def test_unknown_settings_cannot_be_asked_about(self):
         with self.assertRaises(KeyError):
@@ -188,7 +196,7 @@ class DbTest(unittest.TestCase):
 
     def _finish(self, attempt_id, **kw):
         payload = dict(status="budget", solved=False, valid=True, best_depth=100,
-                       matched_edges=180, nodes=1000, duration_ms=10,
+                       matched_edges=180, breaks=0, nodes=1000, duration_ms=10,
                        nodes_per_sec=100, restarts=0, score=180.0,
                        order=[], samples=[])
         payload.update(kw)
@@ -241,6 +249,32 @@ class DbTest(unittest.TestCase):
         self.assertIsNone(detail["matchedEdges"],
                           "an attempt from before edge scoring has no count")
 
+    def test_the_break_count_survives_a_round_trip(self):
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, breaks=6)
+        self.assertEqual(self.db.attempt_detail(aid)["breaks"], 6)
+        self.assertEqual(self.db.attempt_summaries()[0]["breaks"], 6)
+        self.assertEqual(self.db.finished_attempts_for_learning()[0]["breaks"], 6)
+
+    def test_a_database_without_the_breaks_column_is_upgraded_in_place(self):
+        path = os.path.join(self.dir, "t.sqlite")
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, best_depth=191)
+        self.db.close()
+
+        conn = sqlite3.connect(path)
+        conn.execute("ALTER TABLE attempts DROP COLUMN breaks")
+        conn.commit()
+        conn.close()
+
+        self.db = Db(path)
+        detail = self.db.attempt_detail(aid)
+        self.assertEqual(detail["bestDepth"], 191)
+        self.assertIsNone(detail["breaks"],
+                          "an attempt from before slipping was tracked has no count")
+
     def test_running_attempts_are_hidden_until_finished(self):
         self.db.start_attempt(schema.defaults(), False, "tuner")
         self.assertEqual(self.db.attempt_count(), 0)
@@ -262,6 +296,56 @@ class DbTest(unittest.TestCase):
         self.assertEqual(stats["attempts"], 1)
         self.assertEqual(stats["bestDepth"], 180)
         self.assertEqual(stats["avgDepth"], 180)
+
+    def test_stats_track_the_edges_record_separately_from_depth(self):
+        # Edge slipping can place every piece while matching fewer edges than
+        # a shallower, unslipped board, so the two records must not be forced
+        # to agree -- and the piece-count record must not credit the slipped
+        # attempt at all, since it did not honestly place all 256 pieces.
+        deep_but_slipped = self.db.start_attempt(schema.defaults(), False, "tuner")
+        self._finish(deep_but_slipped, best_depth=256, matched_edges=420, breaks=6)
+        shallow_but_perfect = self.db.start_attempt(schema.defaults(), False, "tuner")
+        self._finish(shallow_but_perfect, best_depth=200, matched_edges=440, breaks=0)
+
+        stats = self.db.stats()
+        self.assertEqual(stats["bestDepth"], 200,
+                         "the slipped attempt's depth may not count as the record")
+        self.assertEqual(stats["bestAttemptId"], shallow_but_perfect)
+        self.assertEqual(stats["bestMatchedEdges"], 440)
+        self.assertEqual(stats["bestEdgesAttemptId"], shallow_but_perfect)
+
+    def test_pieces_record_ignores_a_deeper_but_slipped_attempt(self):
+        # Same idea, sharper: the slipped attempt is strictly deeper *and*
+        # would still win on edges here, but it must never win the pieces
+        # record -- that would credit it for pieces it did not honestly place.
+        slipped = self.db.start_attempt(schema.defaults(), False, "tuner")
+        self._finish(slipped, best_depth=250, matched_edges=460, breaks=4)
+        clean = self.db.start_attempt(schema.defaults(), False, "tuner")
+        self._finish(clean, best_depth=230, matched_edges=440, breaks=0)
+
+        stats = self.db.stats()
+        self.assertEqual(stats["bestDepth"], 230)
+        self.assertEqual(stats["bestAttemptId"], clean)
+        # The edges record is unaffected: matched_edges already prices breaks
+        # in, so the slipped attempt can win it honestly.
+        self.assertEqual(stats["bestMatchedEdges"], 460)
+        self.assertEqual(stats["bestEdgesAttemptId"], slipped)
+
+    def test_pieces_record_ignores_attempts_from_before_breaks_was_tracked(self):
+        # A NULL breaks count means "unknown, possibly slipped" (see
+        # _add_missing_columns), not "definitely clean" -- it must not win.
+        aid = self.db.start_attempt(schema.defaults(), False, "tuner")
+        self._finish(aid, best_depth=200, breaks=None)
+        stats = self.db.stats()
+        self.assertEqual(stats["bestDepth"], 0)
+        self.assertIsNone(stats["bestAttemptId"])
+
+    def test_stats_edges_record_ignores_attempts_with_no_edge_count(self):
+        undated = self.db.start_attempt(schema.defaults(), False, "tuner")
+        self._finish(undated, best_depth=300, matched_edges=None)
+        stats = self.db.stats()
+        self.assertEqual(stats["bestMatchedEdges"], 0)
+        self.assertIsNone(stats["bestEdgesAttemptId"])
 
     def test_learning_data_excludes_aborted_and_empty_runs(self):
         keep = self.db.start_attempt(schema.defaults(), False, "tuner")
@@ -441,9 +525,9 @@ class TunerTest(unittest.TestCase):
         """
         for _ in range(4):
             # 'reverse' always ran with a huge budget and so reached深 depths
-            self._attempt({"valueOrder": "reverse"}, 210, budget=100_000_000)
+            self._attempt({"engine": "mrv", "valueOrder": "reverse"}, 210, budget=100_000_000)
             # 'natural' always ran with a tiny budget
-            self._attempt({"valueOrder": "natural"}, 120, budget=100_000)
+            self._attempt({"engine": "mrv", "valueOrder": "natural"}, 120, budget=100_000)
 
         stats = self.tuner.arm_stats()["valueOrder"]
         raw_gap = stats["reverse"]["mean"] - stats["natural"]["mean"]
@@ -460,8 +544,8 @@ class TunerTest(unittest.TestCase):
 
     def test_real_effect_at_equal_length_is_detected(self):
         for _ in range(5):
-            self._attempt({"forwardCheck": "fullBoard"}, 200, budget=1_000_000)
-            self._attempt({"forwardCheck": "none"}, 150, budget=1_000_000)
+            self._attempt({"engine": "mrv", "forwardCheck": "fullBoard"}, 200, budget=1_000_000)
+            self._attempt({"engine": "mrv", "forwardCheck": "none"}, 150, budget=1_000_000)
         stats = self.tuner.arm_stats()["forwardCheck"]
         gap = stats["fullBoard"]["adj"] - stats["none"]["adj"]
         self.assertAlmostEqual(gap, 50.0, delta=2.0)
@@ -542,7 +626,7 @@ class TunerTest(unittest.TestCase):
 
     def test_breakdown_only_reports_values_actually_tried(self):
         for _ in range(3):
-            self._attempt({"cellOrder": "mrv"}, 200)
+            self._attempt({"engine": "mrv", "cellOrder": "mrv"}, 200)
         rows = {b["setting"]: b for b in self.tuner.setting_breakdown()}
         self.assertIn("cellOrder", rows)
         tried = [r for r in rows["cellOrder"]["rows"] if r["attempts"] > 0]
@@ -551,8 +635,8 @@ class TunerTest(unittest.TestCase):
 
     def test_after_attempt_refreshes_stored_model(self):
         for _ in range(4):
-            self._attempt({"cellOrder": "mrv"}, 210)
-            self._attempt({"cellOrder": "rowMajor"}, 150)
+            self._attempt({"engine": "mrv", "cellOrder": "mrv"}, 210)
+            self._attempt({"engine": "mrv", "cellOrder": "rowMajor"}, 150)
         self.tuner.after_attempt()
         self.assertEqual(self.tuner.optimal_config()["cellOrder"], "mrv")
         self.assertTrue(self.db.load_insights())
@@ -601,6 +685,52 @@ class SolvedClaimTest(unittest.TestCase):
         detail = self._finish(solved=False, best=256, edges=468, breaks=12)
         self.assertFalse(detail["solved"])
         self.assertEqual(detail["matchedEdges"], 468)
+        self.assertEqual(detail["breaks"], 12)
+
+    def test_breaks_are_persisted_even_on_a_perfect_board(self):
+        detail = self._finish(solved=True, status="solved", edges=480, breaks=0)
+        self.assertEqual(detail["breaks"], 0)
+
+
+class PinnedSeedTest(unittest.TestCase):
+    """A pinned config must not rebuild the identical board forever."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.db = Db(os.path.join(self.dir, "t.sqlite"))
+        self.sup = supervisor_mod.Supervisor(
+            self.db, os.path.join(ROOT, "java", "classes"), java_bin="java")
+
+    def tearDown(self):
+        self.db.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_first_attempt_keeps_the_seed_it_was_given(self):
+        self.sup.set_config({"randomSeed": 424242, "slipSchedule": "none"})
+        cfg, user_defined, source = self.sup._next_config()
+        self.assertEqual(cfg["randomSeed"], 424242)
+        self.assertTrue(user_defined)
+        self.assertEqual(source, "user")
+
+    def test_later_attempts_of_the_same_pinned_config_get_fresh_seeds(self):
+        self.sup.set_config({"randomSeed": 424242, "slipSchedule": "none"})
+        self.sup._next_config()
+        seeds = set()
+        for _ in range(12):
+            cfg, _, _ = self.sup._next_config()
+            seeds.add(cfg["randomSeed"])
+            self.assertEqual(cfg["slipSchedule"], "none",
+                             "only the seed may change on a pinned config")
+        self.assertGreater(len(seeds), 1)
+        self.assertNotIn(424242, seeds)
+
+    def test_reapplying_reproduces_the_seed_again(self):
+        self.sup.set_config({"randomSeed": 111})
+        self.sup._next_config()
+        self.sup._next_config()
+        self.sup.set_config({"randomSeed": 222})
+        cfg, _, _ = self.sup._next_config()
+        self.assertEqual(cfg["randomSeed"], 222)
 
 
 class HttpApiTest(unittest.TestCase):
@@ -684,6 +814,32 @@ class HttpApiTest(unittest.TestCase):
                     "attemptCount", "stats", "insights", "breakdown"):
             self.assertIn(key, data)
         self.assertEqual(len(data["settings"]), len(schema.SETTINGS))
+        c.close()
+
+    def test_stream_hello_is_a_full_resync_not_just_live_status(self):
+        # A client reaches "hello" on every reconnect -- after a server
+        # restart, or any dropped connection -- and until this was fixed it
+        # only carried the live attempt, leaving the record and the settings
+        # panel's "optimal" figures showing whatever they were before the
+        # restart until the next attempt happened to finish.
+        c = self.conn()
+        c.request("GET", "/api/stream")
+        res = c.getresponse()
+        self.assertEqual(res.status, 200)
+        event_name = None
+        data_line = None
+        for _ in range(30):
+            line = res.readline().decode("utf-8", "replace")
+            if line.startswith("event:"):
+                event_name = line.split(":", 1)[1].strip()
+            elif line.startswith("data:"):
+                data_line = line.split(":", 1)[1].strip()
+            elif event_name and data_line:
+                break
+        self.assertEqual(event_name, "hello")
+        data = json.loads(data_line)
+        for key in ("status", "meta", "stats", "optimal", "optimalDetails"):
+            self.assertIn(key, data, "hello is missing %r" % key)
         c.close()
 
     def test_keep_alive_survives_posts_with_unused_bodies(self):
@@ -783,8 +939,13 @@ class EngineIntegrationTest(unittest.TestCase):
     """Proves the server's argument plumbing matches what the engine accepts."""
 
     def _run(self, cfg):
+        # --workers=1 pins the plain single-descent path: this class checks
+        # that argument plumbing matches what the engine accepts, and a
+        # PortfolioSearch's summed node count would make the node-budget
+        # assertions below depend on how many cores the test happens to run
+        # on. PortfolioSearch has its own dedicated tests in the Java suite.
         args = [shutil.which("java"), "-cp", os.path.join(ROOT, "java", "classes"),
-                "app.Engine", "--frameMs=50"]
+                "app.Engine", "--frameMs=50", "--workers=1"]
         args.extend(schema.to_engine_args(cfg))
         out = subprocess.run(args, capture_output=True, text=True, timeout=180)
         self.assertEqual(out.returncode, 0, out.stderr[:2000])
@@ -851,6 +1012,33 @@ class EngineIntegrationTest(unittest.TestCase):
         end = next(e for e in self._run(cfg) if e["type"] == "end")
         self.assertEqual(end["breaks"], 0)
         self.assertTrue(end["valid"])
+
+    def test_portfolio_mode_produces_well_formed_jsonl_under_real_concurrency(self):
+        # Regression test: PortfolioSearch workers used to be able to call
+        # back into the engine's stdout writer at genuinely overlapping
+        # times (see Engine's listener methods), which interleaved two
+        # lines' bytes and broke every consumer of this stream. Several
+        # workers and a budget small enough to fire many "best" events in a
+        # short attempt is what reproduced it.
+        cfg = schema.coerce_config({"engine": "scan", "nodeBudget": 250_000})
+        args = [shutil.which("java"), "-cp", os.path.join(ROOT, "java", "classes"),
+                "app.Engine", "--frameMs=10", "--workers=6"]
+        args.extend(schema.to_engine_args(cfg))
+        out = subprocess.run(args, capture_output=True, text=True, timeout=180)
+        self.assertEqual(out.returncode, 0, out.stderr[:2000])
+
+        events = []
+        for line in out.stdout.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            events.append(json.loads(line))  # raises on any interleaved line
+
+        end = next(e for e in events if e["type"] == "end")
+        self.assertTrue(end["valid"])
+        # Each of the 6 workers runs its own full budget, so this is also a
+        # check that nodes are genuinely summed rather than one worker's count.
+        self.assertEqual(end["nodes"], 6 * cfg["nodeBudget"])
 
     def test_config_is_echoed_back_unchanged(self):
         cfg = schema.coerce_config({"nodeBudget": 100_000, "cellOrder": "hybrid",

@@ -10,12 +10,13 @@ The solver is a plain Java program; the web app is only a front end for it.
 
 ```sh
 sh build.sh                                   # compile into java/classes
-sh test.sh                                    # 1119 checks, a few seconds
+sh test.sh                                    # 1150 checks, a few seconds
 
 java -cp java/classes core.MrvSolver          # MRV solver on Eternity II
 java -cp java/classes core.MrvSolver 50000000 # stop after 50M steps
 java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
+java -cp java/classes app.Engine --engine=scan --workers=8   # one ScanSolver per worker, best wins
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
 java -cp java/classes core.Bench engines 20   # the two engines, 20s each
@@ -36,6 +37,7 @@ java -cp java/classes app.Engine --nodeBudget=300000   # the JSONL engine, by ha
 | `java/src/core/ScanSolver.java` | **Engine 2**: fixed fill order + two-colour candidate index + edge slipping. ~37x the throughput. |
 | `java/src/core/FillOrder.java` | The fixed cell orders, and the frontier measures used to judge them. |
 | `java/src/core/Search.java` | What both engines expose to `app.Engine`, so an attempt can run either. |
+| `java/src/core/PortfolioSearch.java` | Runs several seeded `ScanSolver`s at once (one per core) and reports the best. |
 | `java/src/core/Solver.java` | Row-major solver with a one-step forward check (the previous version, kept as a baseline). |
 | `java/src/core/RefSolver.java` | Deliberately naive solver used only to cross-validate the fast one. |
 | `java/src/core/Validator.java` | Independent board checker. |
@@ -324,7 +326,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 
 ## The test suite
 
-`java -cp out core.AllTests` → **1119 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
+`java -cp out core.AllTests` → **1150 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
 60-line assertion helper so the suite runs with nothing but a JDK. Exits 1 on failure for CI.
 
 | Test file | What it covers |
@@ -340,6 +342,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `FillOrderTest` | The fixed orders, structurally: the north-and-west invariant at every size from 2 to 20, the exact phase boundaries of the banded order at 16×16, and both frontier measures. No search is run. |
 | `ScanSolverTest` | What only the scan engine can get wrong: that it places in exactly its fill order, that the hint piece appears where it must and nowhere else, that an impossible fixed placement is rejected with the cell and reason in the message, that the node budget is not overshot, and that a second run of the same solver is identical. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
+| `PortfolioSearchTest` | That several workers never do worse than one of them alone, that nodes are genuinely summed across workers, that a solve still validates, and that the same seed and worker count reproduce exactly. |
 | `CrossValidationTest` | **The strongest evidence:** exhaustive solution counts vs the naive reference solver, for both fast engines, with slipping off. |
 
 ### The three tests that matter most
@@ -407,17 +410,26 @@ one.
 
 * **Conflict-driven backjumping / nogood learning** — analysed earlier as a poor return on this problem
   class once MRV and forward checking are in place.
-* **Parallel search** — the remaining cheap multiplier. Split on the top-left corner piece × rotation and
-  give each worker its own `MrvSolver`; state is only ~150 KB per worker. This is the obvious next step.
+* **Parallel search for `MrvSolver`.** Splitting on the top-left corner piece × rotation and giving each
+  worker its own `MrvSolver` (state is only ~150 KB per worker) is still open. `ScanSolver` got a
+  differently-shaped version of this instead -- see below -- because its lack of any per-attempt state
+  makes the split trivial; MRV's restart/tie-break machinery would need more thought to parallelise the
+  same way.
 * **Randomised restarts.** Backtracking runtimes here are heavy-tailed (see the 8×8/7-colour row, where
   both orderings fail). Randomised value ordering plus restarts is the standard cure and would likely
   help more than any further micro-optimisation — at the cost of the determinism the tests rely on.
-* **A varying scan attempt.** `ScanSolver` has no randomness and no restart policy, so every attempt
-  with the same node budget produces the same board, and edge slipping does not change that -- it makes
-  the one deterministic descent go much further, but it is still one descent. That is why `engine` still
-  defaults to `mrv`: the lab learns nothing from repeating a single run. Adding variation looks small:
-  a key's candidates are already contiguous `(word, mask)` pairs, so a seeded starting offset within a
-  run, or a seeded permutation of the per-key runs built once at construction, would give a different
-  descent per seed without putting anything new in the hot loop. Paired with the restart machinery that
-  already exists for `MrvSolver`, that is the obvious next multiplier, and it is deliberately not in
-  this change.
+* **A varying scan attempt** — done. `ScanSolver` now permutes the (word, mask) entries within each key's
+  candidate run from `randomSeed` at construction (`shuffleRuns`, see the "seeded variation" section of its
+  class doc), instead of always trying the lowest-numbered piece first. The tuner already randomises
+  `randomSeed` on every automatic attempt, so repeating `engine=scan` now explores a different descent each
+  time instead of the identical board. `ScanSolver` still has no restart policy of its own -- one seed is
+  one descent.
+* **Cross-attempt parallelism** — done, for `ScanSolver` only. `app.Engine` now runs `engine=scan` as a
+  `core.PortfolioSearch` of one independently-seeded `ScanSolver` per available core (each against the
+  full `nodeBudget`, not a shared fraction of it) and reports whichever finds the best board; `--workers=N`
+  overrides the auto-detected count, and `--workers=1` forces the plain single-descent path. This needed no
+  change to the Python supervisor at all -- one subprocess, now internally multi-threaded, is still one
+  subprocess from its point of view. Measured on the real puzzle at 20M nodes per worker on a 16-core
+  machine: 247/256 pieces, 450/480 edges in ~1s wall-clock, against 241/256 and 440/480 in 22s for a single
+  `ScanSolver` at 1B nodes (docs above) -- the same total node budget, spent across cores instead of one.
+  `MrvSolver` attempts are not parallelised this way; see the first bullet above.

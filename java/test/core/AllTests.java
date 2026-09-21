@@ -28,6 +28,7 @@ public final class AllTests {
         FillOrderTest.run();
         ScanSolverTest.run();
         EdgeSlippingTest.run();
+        PortfolioSearchTest.run();
         CrossValidationTest.run();
 
         long ms = (System.nanoTime() - start) / 1000000L;

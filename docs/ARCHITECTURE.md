@@ -55,7 +55,7 @@ eternity2-lab/
 │   │   ├── Bench.java         benchmarks
 │   │   └── Puzzle.java        the original frame-by-frame prototype (historical reference)
 │   ├── src/app/Engine.java    the JSONL streaming wrapper
-│   ├── test/core/             the solver test suite (1119 checks)
+│   ├── test/core/             the solver test suite (1150 checks)
 │   └── classes/               build output
 ├── server/
 │   ├── app.py           HTTP + SSE server
@@ -116,6 +116,16 @@ when stdin closes. The server passes this flag and holds the pipe open, so an
 engine is never left orphaned if the server dies — and because the engine still
 emits its `end` record on the way out, no attempt's results are ever lost.
 
+With `engine=scan`, the process runs a `core.PortfolioSearch` of one
+independently-seeded `ScanSolver` per available core instead of a single one,
+and reports whichever finds the best board — see `docs/SOLVER.md`. This is
+invisible to the server: `--workers` defaults to
+`Runtime.getRuntime().availableProcessors()`, so the one-process-per-attempt
+model above is unchanged, and every event in the table is emitted exactly the
+same, just possibly describing a different worker's board than the previous
+one. `--workers=1` forces the plain single-descent path; `engine=mrv` attempts
+are never parallelised this way.
+
 ### Sampling, not streaming every step
 
 The solver runs at roughly 1–16 million steps per second. Reporting each one
@@ -173,6 +183,14 @@ solver or growing memory without limit.
 SSE events: `hello`, `meta`, `live`, `state`, `attempt_started`,
 `attempt_finished`, `attempt_aborted`, `error`.
 
+`hello` fires once per connection, including every reconnect -- after a
+server restart, or any dropped connection -- and is a full resync, not just
+the live attempt: `status`, `meta`, `stats` and `optimalDetails`, the same
+fields `attempt_finished` sends. Without `stats`/`optimalDetails` here, a
+client that reconnected without yet seeing a fresh `attempt_finished` would
+keep showing the record and the settings panel's "optimal" figures from
+before the restart indefinitely.
+
 ---
 
 ## Database schema
@@ -183,7 +201,7 @@ and safer than a pool.
 
 ```sql
 attempts(id, started_at, finished_at, status, solved, valid, best_depth,
-         matched_edges, nodes, duration_ms, nodes_per_sec, restarts,
+         matched_edges, breaks, nodes, duration_ms, nodes_per_sec, restarts,
          user_defined, source, score, config_json)
 
 placements(attempt_id, seq, cell, piece, rot)      -- the replay timeline
@@ -207,6 +225,20 @@ depth cannot be converted into an edge count after the fact, so those rows are
 left out of the tuner's statistics rather than counted as a board that matched
 nothing. A file from an older version gains the column on open.
 
+`breaks` is how many of the best board's edges edge slipping deliberately
+mismatched (0 on every attempt that never slips), stored the same way and with
+the same NULL-on-upgrade convention as `matched_edges`.
+
+The UI deliberately keeps `best_depth` (pieces placed, out of 256) as the
+headline number everywhere -- the header, History, the all-time record --
+because that is what someone watching the board actually understands; an edge
+count means little without already knowing how the puzzle is scored. `breaks`
+rides along next to the piece count as a small "N wrong" caveat instead, since
+slipping can let a board place every piece while some of them don't really fit
+their neighbour. `matched_edges` and `Db.stats()`'s `bestMatchedEdges` /
+`bestEdgesAttemptId` stay in the data model and the API for anyone who wants
+the puzzle's own scoring measure, but nothing in the UI is built around them.
+
 ---
 
 ## The interface
@@ -217,7 +249,7 @@ others.
 | Module | Responsibility |
 |---|---|
 | `app.js` | state machine for LIVE vs REPLAY, wiring, chips, sparkline, confetti |
-| `board.js` | canvas renderer: four triangles per tile, pop-in animation, rings |
+| `board.js` | canvas renderer: four triangles per tile, pop-in animation, rings, broken-edge seams |
 | `settings.js` | builds every control from the server's schema |
 | `history.js` | attempt cards and their pills |
 | `insights.js` | lessons and diverging bar charts |

@@ -16,7 +16,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS attempts (
     -- matched internal edges of the best board, out of 480; NULL on attempts
     -- recorded before the engine reported it
     matched_edges INTEGER,
+    -- deliberately mismatched edges of the best board (edge slipping); 0 on
+    -- attempts that never slip and NULL on attempts recorded before this was
+    -- tracked, same convention as matched_edges
+    breaks        INTEGER,
     nodes         INTEGER NOT NULL DEFAULT 0,
     duration_ms   INTEGER NOT NULL DEFAULT 0,
     nodes_per_sec INTEGER NOT NULL DEFAULT 0,
@@ -184,6 +188,8 @@ class Db:
                    self._conn.execute("PRAGMA table_info(attempts)")}
         if "matched_edges" not in present:
             self._conn.execute("ALTER TABLE attempts ADD COLUMN matched_edges INTEGER")
+        if "breaks" not in present:
+            self._conn.execute("ALTER TABLE attempts ADD COLUMN breaks INTEGER")
 
     def close(self):
         with self._lock:
@@ -218,20 +224,23 @@ class Db:
 
     def finish_attempt(self, attempt_id, *, status, solved, valid, best_depth,
                        matched_edges, nodes, duration_ms, nodes_per_sec,
-                       restarts, score, order, samples):
+                       restarts, score, order, samples, breaks=None):
         """Store the results of a finished attempt.
 
         ``matched_edges`` is the score of the best board, or None when the
         engine did not report one; see :meth:`_add_missing_columns`.
+        ``breaks`` is how many of that board's edges were deliberately
+        mismatched (edge slipping); None on attempts recorded before this was
+        tracked, 0 on every attempt that never slips.
         """
         now = time.time()
         with self._lock:
             self._conn.execute(
                 "UPDATE attempts SET finished_at=?, status=?, solved=?, valid=?, "
-                "best_depth=?, matched_edges=?, nodes=?, duration_ms=?, "
+                "best_depth=?, matched_edges=?, breaks=?, nodes=?, duration_ms=?, "
                 "nodes_per_sec=?, restarts=?, score=? WHERE id=?",
                 (now, status, 1 if solved else 0, 1 if valid else 0, best_depth,
-                 matched_edges, nodes, duration_ms, nodes_per_sec, restarts,
+                 matched_edges, breaks, nodes, duration_ms, nodes_per_sec, restarts,
                  score, attempt_id))
             if order:
                 self._conn.executemany(
@@ -273,7 +282,7 @@ class Db:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id,started_at,finished_at,status,solved,valid,best_depth,"
-                "matched_edges,nodes,duration_ms,nodes_per_sec,restarts,"
+                "matched_edges,breaks,nodes,duration_ms,nodes_per_sec,restarts,"
                 "user_defined,source,score,config_json "
                 "FROM attempts WHERE status != 'running' "
                 "ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
@@ -317,6 +326,7 @@ class Db:
             "valid": bool(r["valid"]),
             "bestDepth": r["best_depth"],
             "matchedEdges": r["matched_edges"],
+            "breaks": r["breaks"],
             "nodes": r["nodes"],
             "durationMs": r["duration_ms"],
             "nodesPerSec": r["nodes_per_sec"],
@@ -335,7 +345,7 @@ class Db:
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id,best_depth,matched_edges,nodes,duration_ms,score,"
+                "SELECT id,best_depth,matched_edges,breaks,nodes,duration_ms,score,"
                 "config_json,solved,user_defined,restarts,status "
                 "FROM attempts "
                 # 'aborted' runs were cut short by the user, so they say nothing
@@ -353,6 +363,7 @@ class Db:
                 "id": r["id"],
                 "bestDepth": r["best_depth"],
                 "matchedEdges": r["matched_edges"],
+                "breaks": r["breaks"],
                 "nodes": r["nodes"],
                 "durationMs": r["duration_ms"],
                 "score": r["score"],
@@ -368,23 +379,42 @@ class Db:
         with self._lock:
             row = self._conn.execute(
                 "SELECT COUNT(*) AS attempts, "
-                "COALESCE(MAX(best_depth),0) AS best, "
                 "COALESCE(AVG(best_depth),0) AS avg_depth, "
                 "COALESCE(SUM(nodes),0) AS nodes, "
                 "COALESCE(SUM(duration_ms),0) AS ms, "
                 "COALESCE(SUM(solved),0) AS solved "
                 "FROM attempts WHERE status != 'running' AND nodes > 0").fetchone()
+            # The pieces record only counts attempts with zero broken edges:
+            # edge slipping lets a board place every piece while some of them
+            # don't actually match a neighbour, and crediting that as "more
+            # pieces placed" would let a slipped board quietly claim a record
+            # it did not earn honestly. `breaks = 0` also excludes attempts
+            # recorded before slipping was tracked (NULL), since it is not
+            # actually known whether those slipped.
             best_row = self._conn.execute(
-                "SELECT id,best_depth FROM attempts WHERE status != 'running' AND nodes > 0 "
+                "SELECT id,best_depth FROM attempts WHERE status != 'running' "
+                "AND nodes > 0 AND breaks = 0 "
                 "ORDER BY best_depth DESC, id ASC LIMIT 1").fetchone()
+            # The edges record has no such caveat: matched_edges already
+            # counts breaks against the board (checksBefore[depth] - breaks),
+            # so a slipped board cannot inflate it -- this is the measure
+            # Eternity II results are actually quoted in. Attempts from
+            # before edge scoring have a NULL matched_edges and are excluded
+            # rather than treated as zero.
+            best_edges_row = self._conn.execute(
+                "SELECT id,matched_edges FROM attempts WHERE status != 'running' "
+                "AND nodes > 0 AND matched_edges IS NOT NULL "
+                "ORDER BY matched_edges DESC, id ASC LIMIT 1").fetchone()
         return {
             "attempts": row["attempts"] or 0,
-            "bestDepth": row["best"] or 0,
+            "bestDepth": best_row["best_depth"] if best_row else 0,
             "avgDepth": round(row["avg_depth"] or 0, 2),
             "totalNodes": row["nodes"] or 0,
             "totalMs": row["ms"] or 0,
             "solvedCount": row["solved"] or 0,
             "bestAttemptId": best_row["id"] if best_row else None,
+            "bestMatchedEdges": best_edges_row["matched_edges"] if best_edges_row else 0,
+            "bestEdgesAttemptId": best_edges_row["id"] if best_edges_row else None,
         }
 
     def clear_history(self):

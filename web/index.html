@@ -30,8 +30,12 @@
     <div class="chip" title="Attempt currently being solved">
       <span class="chip-label">Attempt</span><span class="chip-value" id="chipAttempt">—</span>
     </div>
-    <div class="chip chip-accent" title="Most pieces placed in this attempt">
+    <div class="chip chip-accent" id="chipDepthWrap" title="Most pieces placed in this attempt">
       <span class="chip-label">Depth</span><span class="chip-value" id="chipDepth">0<i>/256</i></span>
+      <span class="chip-breaks" id="chipBreaks" hidden></span>
+    </div>
+    <div class="chip" title="Matched internal edges of the current best board — the measure Eternity II results are quoted in">
+      <span class="chip-label">Edges</span><span class="chip-value" id="chipEdges">0<i>/480</i></span>
     </div>
     <div class="chip" title="Search steps explored">
       <span class="chip-label">Nodes</span><span class="chip-value" id="chipNodes">0</span>
@@ -39,8 +43,11 @@
     <div class="chip" title="Search speed">
       <span class="chip-label">Speed</span><span class="chip-value" id="chipSpeed">0<i>/s</i></span>
     </div>
-    <div class="chip chip-clickable" id="chipRecordWrap" title="All-time best across every attempt — click to replay it">
+    <div class="chip chip-clickable" id="chipRecordWrap" title="All-time best pieces placed with no wrong sides — click to replay it">
       <span class="chip-label">Record</span><span class="chip-value" id="chipRecord">0</span>
+    </div>
+    <div class="chip chip-clickable" id="chipEdgesRecordWrap" title="All-time best matched edges across every attempt, wrong sides and all — click to replay it">
+      <span class="chip-label">Best edges</span><span class="chip-value" id="chipEdgesRecord">0<i>/480</i></span>
     </div>
   </div>
 
