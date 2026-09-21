@@ -55,7 +55,7 @@ eternity2-lab/
 │   │   ├── Bench.java         benchmarks
 │   │   └── Puzzle.java        the original frame-by-frame prototype (historical reference)
 │   ├── src/app/Engine.java    the JSONL streaming wrapper
-│   ├── test/core/             the solver test suite (1119 checks)
+│   ├── test/core/             the solver test suite (1243 checks)
 │   └── classes/               build output
 ├── server/
 │   ├── app.py           HTTP + SSE server

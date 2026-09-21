@@ -26,10 +26,12 @@ activeWhen   {'key', 'values'}: this setting only reaches the search when the
 
 A note on ``engine``
 --------------------
-Most of the strategy settings below belong to the most-constrained engine and
-are dead weight under the fixed-scan one, so they say so.  The condition is a
-single level deep: ``hybridThreshold`` depends on ``cellOrder``, which in turn
-depends on ``engine``, and ``is_active`` does not follow that chain.
+Cell-choice and pruning settings belong to the most-constrained engine and are
+dead weight under the fixed-scan one, so they say so.  Piece order and restarts
+reach both, because the fixed scan reads its seed there too -- without them it
+runs one descent and repeats it however long the attempt lasts.  The condition
+is a single level deep: ``hybridThreshold`` depends on ``cellOrder``, which in
+turn depends on ``engine``, and ``is_active`` does not follow that chain.
 """
 
 SETTINGS = [
@@ -46,7 +48,7 @@ SETTINGS = [
             {"value": "mrv", "label": "Most-constrained",
              "blurb": "Picks the hardest square each step and prunes hard. ~1.4M steps/sec."},
             {"value": "scan", "label": "Fixed scan",
-             "blurb": "Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further, but runs the same way every time."},
+             "blurb": "Fills a fixed order with a precomputed candidate table. ~50M steps/sec and reaches further. Repeats one descent unless the piece order is shuffled."},
         ],
     },
     {
@@ -81,6 +83,43 @@ SETTINGS = [
              "blurb": "One mismatch allowed from square 201, rising to ten by square 239. The published schedule behind the best known result."},
             {"value": "verhaard", "label": "Verhaard",
              "blurb": "Starts at square 193 and allows twelve by square 240. More generous, and measured further on this engine."},
+        ],
+    },
+
+    {
+        "key": "quotaSchedule",
+        "label": "Colour quota",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "none",
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: make the solver spend three chosen colours early, and abandon any line of play that falls behind.",
+        "options": [
+            {"value": "none", "label": "Never",
+             "blurb": "No quota. The solver spends the colours whenever they happen to fit."},
+            {"value": "blackwood", "label": "Blackwood",
+             "blurb": "The published ramp: 28 of those sides down by square 26, rising to 119 by square 160. Measured here as far too demanding for this board's route across it -- it stalls the search around square 70."},
+        ],
+    },
+    {
+        "key": "quotaColours",
+        "label": "Quota colours",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "13,16,10",
+        "tunable": True,
+        "activeWhen": {"key": "quotaSchedule", "values": ["blackwood"]},
+        "blurb": "Which three colours the quota counts: one border colour and two interior ones. Ranked by how much room the ramp leaves them on our piece table.",
+        "options": [
+            {"value": "13,16,10", "label": "Blackwood's",
+             "blurb": "His three colour numbers read as ours. One border colour and two interior ones, as he described, and 2 sides clear of impossible."},
+            {"value": "2,9,12", "label": "Most room",
+             "blurb": "The roomiest of all 680 triples on this piece table, and still only 4 sides clear of impossible."},
+            {"value": "3,9,12", "label": "Second roomiest",
+             "blurb": "Same two interior colours, a different border one."},
+            {"value": "13,9,12", "label": "Third roomiest",
+             "blurb": "Same again, on Blackwood's border colour."},
         ],
     },
 
@@ -165,16 +204,17 @@ SETTINGS = [
         "group": "Piece choice",
         "default": "natural",
         "tunable": True,
-        "activeWhen": {"key": "engine", "values": ["mrv"]},
-        "blurb": "The order in which candidate pieces are tried in a square.",
+        "activeWhen": {"key": "engine", "values": ["mrv", "scan"]},
+        "blurb": "The order in which candidate pieces are tried in a square. This is the only thing the seed changes on the fixed scan.",
         "options": [
             {"value": "natural", "label": "Natural",
              "blurb": "Piece number order. Deterministic and cache friendly."},
-            {"value": "reverse", "label": "Reversed", "blurb": "Highest piece number first."},
+            {"value": "reverse", "label": "Reversed",
+             "blurb": "Highest piece number first. Deterministic, and a second descent for free."},
             {"value": "random", "label": "Shuffled",
-             "blurb": "Random order from the seed. Pairs well with restarts."},
+             "blurb": "Random order from the seed. Pairs well with restarts, and is what lets the fixed scan give a second opinion."},
             {"value": "rarestColour", "label": "Rarest colours first",
-             "blurb": "Try pieces whose colours are scarce, to spend rare pieces early."},
+             "blurb": "Try pieces whose colours are scarce, to spend rare pieces early. Most-constrained only; the fixed scan reads it as Natural."},
         ],
     },
     {
@@ -185,8 +225,8 @@ SETTINGS = [
         "min": 0, "max": 100, "step": 5,
         "default": 0,
         "tunable": True,
-        "activeWhen": {"key": "engine", "values": ["mrv"]},
-        "blurb": "How much randomness is mixed into the piece order.",
+        "activeWhen": {"key": "engine", "values": ["mrv", "scan"]},
+        "blurb": "How much randomness is mixed into the piece order. On the fixed scan it is the share of squares whose order is scrambled; the rest keep theirs.",
         "low": "0 = keep the chosen order exactly",
         "high": "100 = fully scrambled every time",
     },
@@ -242,8 +282,8 @@ SETTINGS = [
         "group": "Restarts",
         "default": "none",
         "tunable": True,
-        "activeWhen": {"key": "engine", "values": ["mrv"]},
-        "blurb": "Abandon and restart the search to escape an unlucky early choice.",
+        "activeWhen": {"key": "engine", "values": ["mrv", "scan"]},
+        "blurb": "Abandon and restart the search to escape an unlucky early choice. A restart re-draws the piece order, so it does nothing unless there is randomness to re-draw.",
         "options": [
             {"value": "none", "label": "Never", "blurb": "One long search."},
             {"value": "fixed", "label": "Fixed", "blurb": "Restart every N nodes."},
