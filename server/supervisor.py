@@ -392,6 +392,18 @@ class Supervisor:
         best_depth = int(end.get("best", 0))
         nodes = int(end.get("nodes", 0))
         solved = bool(end.get("solved", False))
+        breaks = int(end.get("breaks") or 0)
+        if solved and breaks > 0:
+            # "Solved" means a perfect board and nothing else. Edge slipping
+            # finishes boards that carry deliberate mismatches, and recording
+            # one of those as a solve would be worse than never having the
+            # feature, so the engine's claim is cross-checked here rather than
+            # taken on trust -- and refused out loud when it does not hold.
+            sys.stderr.write(
+                "engine claimed attempt %d solved with %d broken edges; "
+                "recording it as unsolved. A solved board matches every edge, "
+                "so this is an engine bug\n" % (attempt_id, breaks))
+            solved = False
         status = end.get("status", "completed")
         if status == "stopped":
             # The run was cut short by the user (settings change, skip, pause).

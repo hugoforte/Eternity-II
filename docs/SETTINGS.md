@@ -24,11 +24,17 @@ Do not edit it by hand; change the schema and regenerate.
 
 ## A note on safety
 
-No setting can break the rules of the puzzle. Board size, the piece set and the
-mandatory hint piece (139 at row 8, column 7) are fixed, and every placement is
-still checked for matching edges. The worst a setting can do is make the search
-slow, or make it incomplete so it can never find a full solution --
-`Choices per square = 1` is the clearest example, and it is labelled as such.
+No setting can change the puzzle. Board size, the piece set and the mandatory
+hint piece (139 at row 8, column 7) are fixed, every piece is used at most
+once, and no setting can put a colour against the border.
+
+What a setting can change is what counts as good enough. `Edge slipping` lets
+the solver leave a bounded number of squares deliberately mismatched so it can
+keep going where an exact search would have to back up; those boards are scored
+honestly on matched edges, and a board with any mismatch is never reported as
+solved. A setting can also make the search slow, or make it incomplete so it
+can never find a full solution -- `Choices per square = 1` is the clearest
+example, and it is labelled as such.
 
 ---
 
@@ -62,6 +68,22 @@ Only has an effect when Engine is **Fixed scan**.
 | **Plain rows** | Straight left-to-right, top-to-bottom. Simplest route, longest wait before a mistake shows. |
 
 Default: **Banded** (`banded`)
+
+### Edge slipping
+
+`slipSchedule` &middot; choice &middot; learned automatically
+
+Fixed scan only: how many edges the solver may leave deliberately mismatched, and from how deep into the board.
+
+Only has an effect when Engine is **Fixed scan**.
+
+| Choice | What it does |
+|---|---|
+| **Never** | Every placed edge must match. Exact, but the board can never score above the best perfect start it happens to find. |
+| **Blackwood** | One mismatch allowed from square 201, rising to ten by square 239. The published schedule behind the best known result. |
+| **Verhaard** | Starts at square 193 and allows twelve by square 240. More generous, and measured further on this engine. |
+
+Default: **Blackwood** (`blackwood`)
 
 ### Cell order
 

@@ -11,6 +11,7 @@ The last test actually launches the Java engine, so it is skipped when no
 compiled classes or JVM are available.
 """
 
+import io
 import json
 import os
 import shutil
@@ -25,6 +26,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 
 import schema                      # noqa: E402
+import supervisor as supervisor_mod  # noqa: E402
 import tuner as tuner_mod          # noqa: E402
 from db import Db                  # noqa: E402
 
@@ -53,6 +55,9 @@ class SchemaTest(unittest.TestCase):
         self.assertTrue(d["greyInteriorPruning"])
         self.assertEqual(d["restartPolicy"], "none")
         self.assertEqual(d["shuffleStrength"], 0)
+        # Blackwood's is the published schedule and the one the scan engine
+        # starts from; the learner is free to move to another.
+        self.assertEqual(d["slipSchedule"], "blackwood")
 
     def test_every_default_is_a_legal_arm(self):
         for setting in schema.SETTINGS:
@@ -132,6 +137,12 @@ class SchemaTest(unittest.TestCase):
             cfg = dict(schema.defaults(), cellOrder=order)
             self.assertEqual(schema.is_active("tieBreak", cfg), active,
                              "tieBreak under cellOrder=%s" % order)
+
+    def test_edge_slipping_only_counts_for_the_fixed_scan_engine(self):
+        for engine, active in (("scan", True), ("mrv", False)):
+            cfg = dict(schema.defaults(), engine=engine)
+            self.assertEqual(schema.is_active("slipSchedule", cfg), active,
+                             "engine=%s" % engine)
 
     def test_a_missing_dependency_value_falls_back_to_its_default(self):
         self.assertFalse(schema.is_active("restartMultiplier", {}))
@@ -549,6 +560,49 @@ class TunerTest(unittest.TestCase):
 
 # ------------------------------------------------------------------ http api
 
+class SolvedClaimTest(unittest.TestCase):
+    """A board with deliberate mismatches must never be recorded as a solve."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.db = Db(os.path.join(self.dir, "t.sqlite"))
+        self.sup = supervisor_mod.Supervisor(
+            self.db, os.path.join(ROOT, "java", "classes"), java_bin="java")
+
+    def tearDown(self):
+        self.db.close()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _finish(self, **end):
+        cfg = schema.defaults()
+        aid = self.db.start_attempt(cfg, user_defined=False, source="tuner")
+        payload = dict(status="budget", solved=False, valid=True, best=256,
+                       edges=480, breaks=0, nodes=1000, ms=10, nps=100,
+                       restarts=0, order=[], samples=[])
+        payload.update(end)
+        self.sup._finish_attempt(aid, cfg, False, payload)
+        return self.db.attempt_detail(aid)
+
+    def test_a_perfect_board_is_still_recorded_as_solved(self):
+        detail = self._finish(solved=True, status="solved", edges=480, breaks=0)
+        self.assertTrue(detail["solved"])
+
+    def test_a_slipped_board_is_refused_even_if_the_engine_claims_it(self):
+        err = io.StringIO()
+        real, sys.stderr = sys.stderr, err
+        try:
+            detail = self._finish(solved=True, status="solved", edges=468, breaks=12)
+        finally:
+            sys.stderr = real
+        self.assertFalse(detail["solved"])
+        self.assertIn("12 broken edges", err.getvalue())
+
+    def test_a_slipped_board_is_still_stored_and_scored(self):
+        detail = self._finish(solved=False, best=256, edges=468, breaks=12)
+        self.assertFalse(detail["solved"])
+        self.assertEqual(detail["matchedEdges"], 468)
+
+
 class HttpApiTest(unittest.TestCase):
     """Drives the real HTTP server over a socket, on a reused connection.
 
@@ -780,6 +834,23 @@ class EngineIntegrationTest(unittest.TestCase):
         end = next(e for e in events if e["type"] == "end")
         self.assertTrue(end["valid"])
         self.assertLessEqual(end["nodes"], 100_000)
+
+    def test_edge_slipping_reports_its_breaks_and_claims_no_solve(self):
+        cfg = schema.coerce_config({"engine": "scan", "slipSchedule": "blackwood",
+                                    "nodeBudget": 5_000_000})
+        end = next(e for e in self._run(cfg) if e["type"] == "end")
+        self.assertGreater(end["breaks"], 0, "the schedule never engaged")
+        self.assertFalse(end["solved"])
+        self.assertTrue(end["valid"], "a slipped board must still be legal")
+        self.assertLess(end["edges"], 480)
+        self.assertGreater(end["edges"], 0)
+
+    def test_the_exact_scan_engine_breaks_nothing(self):
+        cfg = schema.coerce_config({"engine": "scan", "slipSchedule": "none",
+                                    "nodeBudget": 1_000_000})
+        end = next(e for e in self._run(cfg) if e["type"] == "end")
+        self.assertEqual(end["breaks"], 0)
+        self.assertTrue(end["valid"])
 
     def test_config_is_echoed_back_unchanged(self):
         cfg = schema.coerce_config({"nodeBudget": 100_000, "cellOrder": "hybrid",

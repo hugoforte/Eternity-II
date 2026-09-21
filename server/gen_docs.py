@@ -42,11 +42,17 @@ Do not edit it by hand; change the schema and regenerate.
 
 ## A note on safety
 
-No setting can break the rules of the puzzle. Board size, the piece set and the
-mandatory hint piece (139 at row 8, column 7) are fixed, and every placement is
-still checked for matching edges. The worst a setting can do is make the search
-slow, or make it incomplete so it can never find a full solution --
-`Choices per square = 1` is the clearest example, and it is labelled as such.
+No setting can change the puzzle. Board size, the piece set and the mandatory
+hint piece (139 at row 8, column 7) are fixed, every piece is used at most
+once, and no setting can put a colour against the border.
+
+What a setting can change is what counts as good enough. `Edge slipping` lets
+the solver leave a bounded number of squares deliberately mismatched so it can
+keep going where an exact search would have to back up; those boards are scored
+honestly on matched edges, and a board with any mismatch is never reported as
+solved. A setting can also make the search slow, or make it incomplete so it
+can never find a full solution -- `Choices per square = 1` is the clearest
+example, and it is labelled as such.
 
 ---
 

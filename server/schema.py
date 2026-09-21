@@ -65,6 +65,24 @@ SETTINGS = [
              "blurb": "Straight left-to-right, top-to-bottom. Simplest route, longest wait before a mistake shows."},
         ],
     },
+    {
+        "key": "slipSchedule",
+        "label": "Edge slipping",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "blackwood",
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: how many edges the solver may leave deliberately mismatched, and from how deep into the board.",
+        "options": [
+            {"value": "none", "label": "Never",
+             "blurb": "Every placed edge must match. Exact, but the board can never score above the best perfect start it happens to find."},
+            {"value": "blackwood", "label": "Blackwood",
+             "blurb": "One mismatch allowed from square 201, rising to ten by square 239. The published schedule behind the best known result."},
+            {"value": "verhaard", "label": "Verhaard",
+             "blurb": "Starts at square 193 and allows twelve by square 240. More generous, and measured further on this engine."},
+        ],
+    },
 
     # ------------------------------------------------------------ strategy
     {

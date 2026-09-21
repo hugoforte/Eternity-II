@@ -47,6 +47,12 @@ public interface Search {
     int bestPlaced();
     /** Matched internal edges of {@link #bestBoard}, out of 480 on Eternity II. */
     int bestMatchedEdges();
+    /**
+     * Deliberately mismatched edges of {@link #bestBoard}.  Only
+     * {@link ScanSolver} with edge slipping ever returns more than 0, and a
+     * board with any is never reported as a solution.
+     */
+    int bestBreaks();
     int restarts();
     /** True if the search stopped because it ran out of node budget. */
     boolean aborted();

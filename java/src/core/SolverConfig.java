@@ -26,6 +26,15 @@ public final class SolverConfig {
     /** Plain left-to-right, top-to-bottom sweep. */
     public static final int FILL_ROW_MAJOR = 1;
 
+    // ---------------------------------------------------------- edge slipping
+
+    /** Every placed edge must match; the search is exact. */
+    public static final int SLIP_NONE      = 0;
+    /** Blackwood's published ceiling: one more break every few depths from 201. */
+    public static final int SLIP_BLACKWOOD = 1;
+    /** Verhaard's ceiling: starts sooner at 193 and rises to 12 by depth 240. */
+    public static final int SLIP_VERHAARD  = 2;
+
     // ---------------------------------------------------------- cell ordering
 
     /** Always take the empty cell with the fewest candidates. */
@@ -76,6 +85,8 @@ public final class SolverConfig {
 
     public int     engine              = ENGINE_MRV;
     public int     fillOrder           = FILL_BANDED;
+    /** How many mismatched edges {@link ScanSolver} may leave, by depth. */
+    public int     slipSchedule        = SLIP_NONE;
     public int     cellOrder           = CELL_MRV;
     /** Hybrid switches to lowest-index once the MRV minimum exceeds this. */
     public int     hybridThreshold     = 4;
@@ -104,6 +115,7 @@ public final class SolverConfig {
         SolverConfig c = new SolverConfig();
         c.engine = engine;
         c.fillOrder = fillOrder;
+        c.slipSchedule = slipSchedule;
         c.cellOrder = cellOrder;
         c.hybridThreshold = hybridThreshold;
         c.tieBreak = tieBreak;
@@ -141,6 +153,18 @@ public final class SolverConfig {
     public static String fillOrderName(int v) {
         if (v == FILL_ROW_MAJOR) return "rowMajor";
         return "banded";
+    }
+
+    public static int parseSlipSchedule(String s) {
+        if (s == null) return SLIP_NONE;
+        if (s.equals("blackwood")) return SLIP_BLACKWOOD;
+        if (s.equals("verhaard")) return SLIP_VERHAARD;
+        return SLIP_NONE;
+    }
+    public static String slipScheduleName(int v) {
+        if (v == SLIP_BLACKWOOD) return "blackwood";
+        if (v == SLIP_VERHAARD) return "verhaard";
+        return "none";
     }
 
     public static int parseCellOrder(String s) {
@@ -235,6 +259,7 @@ public final class SolverConfig {
         sb.append('{');
         sb.append("\"engine\":\"").append(engineName(engine)).append("\",");
         sb.append("\"fillOrder\":\"").append(fillOrderName(fillOrder)).append("\",");
+        sb.append("\"slipSchedule\":\"").append(slipScheduleName(slipSchedule)).append("\",");
         sb.append("\"cellOrder\":\"").append(cellOrderName(cellOrder)).append("\",");
         sb.append("\"hybridThreshold\":").append(hybridThreshold).append(',');
         sb.append("\"tieBreak\":\"").append(tieBreakName(tieBreak)).append("\",");
@@ -271,6 +296,7 @@ public final class SolverConfig {
     public void apply(String k, String v) {
         if (k.equals("engine")) engine = parseEngine(v);
         else if (k.equals("fillOrder")) fillOrder = parseFillOrder(v);
+        else if (k.equals("slipSchedule")) slipSchedule = parseSlipSchedule(v);
         else if (k.equals("cellOrder")) cellOrder = parseCellOrder(v);
         else if (k.equals("hybridThreshold")) hybridThreshold = clampInt(v, 1, 4096, hybridThreshold);
         else if (k.equals("tieBreak")) tieBreak = parseTieBreak(v);
