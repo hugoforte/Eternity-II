@@ -185,6 +185,56 @@ public final class Instance {
                             new int[] { rot });
     }
 
+    /**
+     * The four optional clue-puzzle placements, on top of the mandatory piece.
+     *
+     * Tomy sold four smaller companion puzzles, each of which revealed one
+     * further placement.  Respecting all five is the "strict canonical" track;
+     * respecting only piece 139 is "canonical", which is what {@link
+     * #eternity2()} builds and what the published records are set on.
+     *
+     * Published as piece 208 at C3 90 degrees, 255 at C14 90, 181 at N3 90 and
+     * 249 at N14 180, with rows lettered A-P downwards and columns 1-16 across.
+     * Those angles are quoted against whichever piece table the publisher used,
+     * and a rotation index only means something relative to a stored
+     * orientation, so {@code quarterTurnOffset} exists to reconcile ours with
+     * theirs.  {@link #eternity2StrictCanonical()} passes the offset that was
+     * calibrated by measurement; see Bench's {@code clues} mode.
+     */
+    public static Instance eternity2WithClues(int quarterTurnOffset) {
+        int[][] pieces = new int[256][4];
+        Pieces.SetupPieces(pieces);
+
+        int[] clueCell  = { 8 * 16 + 7, 2 * 16 + 2, 2 * 16 + 13, 13 * 16 + 2, 13 * 16 + 13 };
+        int[] cluePiece = { 138, 207, 254, 180, 248 };
+        int[] clueRot   = { -1, 1, 1, 1, 2 };          // -1: derived, as in eternity2()
+
+        int base = Sides.pack(pieces[138]);
+        for (int r = 0; r < 4; r++) {
+            if (Sides.rotateCW(base, r) == Sides.pack(8, 6, 16, 16)) { clueRot[0] = r; break; }
+        }
+        if (clueRot[0] < 0) {
+            throw new IllegalStateException("piece 139 cannot be oriented as the hint requires");
+        }
+        for (int i = 1; i < clueRot.length; i++) {
+            clueRot[i] = (clueRot[i] + quarterTurnOffset) & 3;
+        }
+        return new Instance(16, pieces, clueCell, cluePiece, clueRot);
+    }
+
+    /** All five clues, with the calibrated rotation offset. */
+    public static Instance eternity2StrictCanonical() {
+        return eternity2WithClues(CLUE_ROT_OFFSET);
+    }
+
+    /**
+     * Reconciles the published clue angles with this piece table's stored
+     * orientations.  Measured, not assumed: a wrong offset makes the four
+     * interior clues mutually unsatisfiable and the search stalls at a tiny
+     * depth, which is what Bench's {@code clues} mode reports.
+     */
+    public static final int CLUE_ROT_OFFSET = 0;
+
     /** Same pieces and board as {@link #eternity2()} but with no fixed piece. */
     public static Instance eternity2NoFixedPiece() {
         int[][] pieces = new int[256][4];

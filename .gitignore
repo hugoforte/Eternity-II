@@ -7,7 +7,12 @@ __pycache__/
 *.pyc
 
 # Runtime/generated data (regenerated on run; see README)
-data/eternity2.sqlite
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+
+# Scratch notes and experiment output
+.notes/
 
 # Local IDE/tool state
 .kilo/
