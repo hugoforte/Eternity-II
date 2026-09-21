@@ -99,7 +99,7 @@ SETTINGS = [
             {"value": "none", "label": "Never",
              "blurb": "No quota. The solver spends the colours whenever they happen to fit."},
             {"value": "blackwood", "label": "Blackwood",
-             "blurb": "The published ramp: 28 of those sides down by square 26, rising to 119 by square 160. Measured here as far too demanding for this board's route across it -- it stalls the search around square 70."},
+             "blurb": "The published ramp: 28 of those sides down by square 26, rising to 119 by square 160. Worth 1 more piece and 2 more edges at every budget measured, and it reaches this project's best board on one core in six minutes."},
         ],
     },
     {
@@ -115,9 +115,9 @@ SETTINGS = [
             {"value": "14,22,5", "label": "Blackwood's",
              "blurb": "His own three, carried across from his piece table's numbering into ours. Three pieces carry all three of them, which is the overlap he picked them for."},
             {"value": "1,7,21", "label": "Most room",
-             "blurb": "The roomiest of all 680 triples once the ramp is measured against the cells the fill order has actually reached. Roomier than Blackwood's, and worse."},
+             "blurb": "The roomiest of all 680 triples once the ramp is measured against the cells the fill order has actually reached. Roomier than Blackwood's own three, and far worse: 125 pieces against his 249."},
             {"value": "14,7,21", "label": "Most room, his border colour",
-             "blurb": "The roomiest triple that keeps Blackwood's border colour, so only the two interior ones change."},
+             "blurb": "The roomiest triple that keeps Blackwood's border colour, so only the two interior ones change. Worse again, at 111 pieces."},
         ],
     },
 

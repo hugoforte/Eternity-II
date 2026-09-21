@@ -266,6 +266,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the schema.
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | how the parts fit together, the engine protocol, the database schema, the HTTP API |
 | [docs/SOLVER.md](docs/SOLVER.md) | the solver algorithm, why it is built this way, and the benchmark numbers behind the defaults |
 | [docs/TESTING.md](docs/TESTING.md) | what the two test suites cover and how to run them |
+| [docs/TYING-THE-RECORD.md](docs/TYING-THE-RECORD.md) | where this engine stands against the world record, and what tying it would actually cost |
 
 ## 8. Troubleshooting
 

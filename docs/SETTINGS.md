@@ -96,7 +96,7 @@ Only has an effect when Engine is **Fixed scan**.
 | Choice | What it does |
 |---|---|
 | **Never** | No quota. The solver spends the colours whenever they happen to fit. |
-| **Blackwood** | The published ramp: 28 of those sides down by square 26, rising to 119 by square 160. Measured here as far too demanding for this board's route across it -- it stalls the search around square 70. |
+| **Blackwood** | The published ramp: 28 of those sides down by square 26, rising to 119 by square 160. Worth 1 more piece and 2 more edges at every budget measured, and it reaches this project's best board on one core in six minutes. |
 
 Default: **Never** (`none`)
 
@@ -104,18 +104,17 @@ Default: **Never** (`none`)
 
 `quotaColours` &middot; choice &middot; learned automatically
 
-Which three colours the quota counts: one border colour and two interior ones. Ranked by how much room the ramp leaves them on our piece table.
+Which three colours the quota counts: one border colour and two interior ones. Blackwood chose his for their overlap, and no cheap statistic picks them out -- they came from reading his source.
 
 Only has an effect when Colour quota is **Blackwood**.
 
 | Choice | What it does |
 |---|---|
-| **Blackwood's** | His three colour numbers read as ours. One border colour and two interior ones, as he described, and 2 sides clear of impossible. |
-| **Most room** | The roomiest of all 680 triples on this piece table, and still only 4 sides clear of impossible. |
-| **Second roomiest** | Same two interior colours, a different border one. |
-| **Third roomiest** | Same again, on Blackwood's border colour. |
+| **Blackwood's** | His own three, carried across from his piece table's numbering into ours. Three pieces carry all three of them, which is the overlap he picked them for. |
+| **Most room** | The roomiest of all 680 triples once the ramp is measured against the cells the fill order has actually reached. Roomier than Blackwood's own three, and far worse: 125 pieces against his 249. |
+| **Most room, his border colour** | The roomiest triple that keeps Blackwood's border colour, so only the two interior ones change. Worse again, at 111 pieces. |
 
-Default: **Blackwood's** (`13,16,10`)
+Default: **Blackwood's** (`14,22,5`)
 
 ### Cell order
 
