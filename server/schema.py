@@ -21,11 +21,51 @@ tunable      whether the learner is allowed to change it
 activeWhen   {'key', 'values'}: this setting only reaches the search when the
              named setting holds one of those values.  A setting without it is
              always active.  The learner credits a setting only for attempts it
-             could actually have influenced, so these have to match what
-             MrvSolver reads.
+             could actually have influenced, so these have to match what the
+             engines read.
+
+A note on ``engine``
+--------------------
+Most of the strategy settings below belong to the most-constrained engine and
+are dead weight under the fixed-scan one, so they say so.  The condition is a
+single level deep: ``hybridThreshold`` depends on ``cellOrder``, which in turn
+depends on ``engine``, and ``is_active`` does not follow that chain.
 """
 
 SETTINGS = [
+    # -------------------------------------------------------------- engine
+    {
+        "key": "engine",
+        "label": "Engine",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "mrv",
+        "tunable": True,
+        "blurb": "Which search engine runs the attempt. They obey different settings.",
+        "options": [
+            {"value": "mrv", "label": "Most-constrained",
+             "blurb": "Picks the hardest square each step and prunes hard. ~1.4M steps/sec."},
+            {"value": "scan", "label": "Fixed scan",
+             "blurb": "Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further, but runs the same way every time."},
+        ],
+    },
+    {
+        "key": "fillOrder",
+        "label": "Fill order",
+        "kind": "enum",
+        "group": "Search strategy",
+        "default": "banded",
+        "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["scan"]},
+        "blurb": "Fixed scan only: the route the solver takes across the board.",
+        "options": [
+            {"value": "banded", "label": "Banded",
+             "blurb": "Row scan, then a narrowed scan, then the bottom band column by column, then nested L-shapes. A mistake surfaces sooner where the search is deepest."},
+            {"value": "rowMajor", "label": "Plain rows",
+             "blurb": "Straight left-to-right, top-to-bottom. Simplest route, longest wait before a mistake shows."},
+        ],
+    },
+
     # ------------------------------------------------------------ strategy
     {
         "key": "cellOrder",
@@ -34,6 +74,7 @@ SETTINGS = [
         "group": "Search strategy",
         "default": "mrv",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "How the solver picks which empty square to fill next.",
         "options": [
             {"value": "mrv", "label": "Most constrained",
@@ -86,6 +127,7 @@ SETTINGS = [
         "group": "Search strategy",
         "default": "auto",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "Which square the solver is forced to fill first.",
         "options": [
             {"value": "auto", "label": "Let it choose", "blurb": "No constraint on the opening move."},
@@ -105,6 +147,7 @@ SETTINGS = [
         "group": "Piece choice",
         "default": "natural",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "The order in which candidate pieces are tried in a square.",
         "options": [
             {"value": "natural", "label": "Natural",
@@ -124,6 +167,7 @@ SETTINGS = [
         "min": 0, "max": 100, "step": 5,
         "default": 0,
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "How much randomness is mixed into the piece order.",
         "low": "0 = keep the chosen order exactly",
         "high": "100 = fully scrambled every time",
@@ -136,6 +180,7 @@ SETTINGS = [
         "values": [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024],
         "default": 1024,
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "Maximum number of pieces tried in any one square before giving up on it.",
         "low": "1 = greedy. Blisteringly fast, can never find a full solution",
         "high": "1024 = try everything. Complete search",
@@ -149,6 +194,7 @@ SETTINGS = [
         "group": "Pruning",
         "default": "fullBoard",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "How hard the solver looks for dead ends before committing.",
         "options": [
             {"value": "none", "label": "None", "blurb": "Never look ahead. Maximum speed per step, worst pruning."},
@@ -178,6 +224,7 @@ SETTINGS = [
         "group": "Restarts",
         "default": "none",
         "tunable": True,
+        "activeWhen": {"key": "engine", "values": ["mrv"]},
         "blurb": "Abandon and restart the search to escape an unlucky early choice.",
         "options": [
             {"value": "none", "label": "Never", "blurb": "One long search."},

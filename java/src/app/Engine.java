@@ -2,6 +2,8 @@ package app;
 
 import core.Instance;
 import core.MrvSolver;
+import core.ScanSolver;
+import core.Search;
 import core.SolveListener;
 import core.SolverConfig;
 import core.Sides;
@@ -39,7 +41,7 @@ import java.io.PrintWriter;
  */
 public final class Engine implements SolveListener {
 
-    private MrvSolver solver;
+    private Search solver;
     private Instance inst;
     private PrintWriter out;
 
@@ -96,11 +98,12 @@ public final class Engine implements SolveListener {
     private void run(SolverConfig cfg, long sampleEvery, boolean watchStdin) {
         out = new PrintWriter(new OutputStreamWriter(System.out), false);
         inst = Instance.eternity2();
-        solver = new MrvSolver(inst, cfg);
-        solver.listener = this;
-        solver.sampleEveryNodes = sampleEvery;
-        solver.verbose = false;
-        solver.stopAtFirstSolution = true;
+        solver = (cfg.engine == SolverConfig.ENGINE_SCAN)
+               ? (Search) new ScanSolver(inst, cfg)
+               : (Search) new MrvSolver(inst, cfg);
+        solver.setListener(this);
+        solver.setSampleEveryNodes(sampleEvery);
+        solver.setStopAtFirstSolution(true);
 
         emitMeta(cfg);
 
@@ -126,7 +129,7 @@ public final class Engine implements SolveListener {
 
         if (stopRequested) status = "stopped";
         else if (found >= 1) status = "solved";
-        else if (solver.aborted) status = "budget";
+        else if (solver.aborted()) status = "budget";
         else status = "exhausted";
 
         emitEnd(status, found >= 1);
@@ -138,7 +141,7 @@ public final class Engine implements SolveListener {
         stopRequested = true;
         // Bring the search to a halt at its next node; it still unwinds cleanly
         // and the "end" record is emitted by run().
-        solver.maxNodes = 1;
+        solver.requestStop();
     }
 
     static final class StdinWatcher implements Runnable {
@@ -161,20 +164,20 @@ public final class Engine implements SolveListener {
 
     // ------------------------------------------------------------- listener
 
-    public void onNewBest(MrvSolver s) {
+    public void onNewBest(Search s) {
         recordSample(s);
         StringBuilder sb = new StringBuilder(4096);
         sb.append("{\"type\":\"best\",\"ms\":").append(ms());
-        sb.append(",\"nodes\":").append(s.nodes);
-        sb.append(",\"placed\":").append(s.placed);
-        sb.append(",\"edges\":").append(s.bestMatchedEdges);
+        sb.append(",\"nodes\":").append(s.nodes());
+        sb.append(",\"placed\":").append(s.placedCount());
+        sb.append(",\"edges\":").append(s.bestMatchedEdges());
         sb.append(",\"board\":");
         appendBoard(sb, s.boardSnapshot());
         sb.append('}');
         emit(sb.toString());
     }
 
-    public void onSample(MrvSolver s) {
+    public void onSample(Search s) {
         recordSample(s);
         long now = System.nanoTime();
         if (now - lastFrameNanos < frameIntervalNanos) return;
@@ -183,21 +186,27 @@ public final class Engine implements SolveListener {
         long elapsed = ms();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("{\"type\":\"frame\",\"ms\":").append(elapsed);
-        sb.append(",\"nodes\":").append(s.nodes);
-        sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (s.nodes * 1000L / elapsed));
-        sb.append(",\"placed\":").append(s.placed);
-        sb.append(",\"best\":").append(s.bestPlaced);
-        sb.append(",\"restarts\":").append(s.restarts);
+        sb.append(",\"nodes\":").append(s.nodes());
+        sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (s.nodes() * 1000L / elapsed));
+        sb.append(",\"placed\":").append(s.placedCount());
+        sb.append(",\"best\":").append(s.bestPlaced());
+        sb.append(",\"restarts\":").append(s.restarts());
         sb.append(",\"board\":");
         appendBoard(sb, s.boardSnapshot());
         sb.append('}');
         emit(sb.toString());
     }
 
-    public void onRestart(MrvSolver s, int index) {
+    public void onRestart(Search s, int index) {
         emit("{\"type\":\"restart\",\"ms\":" + ms()
-             + ",\"nodes\":" + s.nodes + ",\"index\":" + index + "}");
+             + ",\"nodes\":" + s.nodes() + ",\"index\":" + index + "}");
     }
+
+    /**
+     * Nothing to emit: the search stops at its first solution, and the "end"
+     * record carries the solved board and its validation a moment later.
+     */
+    public void onSolution(Search s) { }
 
     // ------------------------------------------------------------- emitters
 
@@ -225,12 +234,12 @@ public final class Engine implements SolveListener {
     }
 
     private void emitEnd(String status, boolean solved) {
-        int[] board = (solver.bestBoard != null) ? solver.bestBoard : solver.boardSnapshot();
+        int[] board = (solver.bestBoard() != null) ? solver.bestBoard() : solver.boardSnapshot();
         String valid;
-        if (solved && solver.solutionBoard != null) {
-            String err = Validator.validateComplete(inst, solver.solutionBoard);
+        if (solved && solver.solutionBoard() != null) {
+            String err = Validator.validateComplete(inst, solver.solutionBoard());
             valid = (err == null) ? "true" : "false";
-            board = solver.solutionBoard;
+            board = solver.solutionBoard();
         } else {
             String err = Validator.validatePartial(inst, board, false);
             valid = (err == null) ? "true" : "false";
@@ -239,20 +248,22 @@ public final class Engine implements SolveListener {
         long elapsed = ms();
         StringBuilder sb = new StringBuilder(32768);
         sb.append("{\"type\":\"end\",\"ms\":").append(elapsed);
-        sb.append(",\"nodes\":").append(solver.nodes);
-        sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (solver.nodes * 1000L / elapsed));
-        sb.append(",\"best\":").append(solver.bestPlaced);
+        sb.append(",\"nodes\":").append(solver.nodes());
+        sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (solver.nodes() * 1000L / elapsed));
+        sb.append(",\"best\":").append(solver.bestPlaced());
         sb.append(",\"edges\":").append(Validator.matchedEdges(inst, board));
         sb.append(",\"solved\":").append(solved);
         sb.append(",\"valid\":").append(valid);
-        sb.append(",\"restarts\":").append(solver.restarts);
+        sb.append(",\"restarts\":").append(solver.restarts());
         sb.append(",\"status\":\"").append(status).append('"');
 
         sb.append(",\"order\":[");
-        for (int i = 0; i < solver.bestOrderLength; i++) {
+        int[] orderCells = solver.bestOrderCells();
+        int[] orderVariants = solver.bestOrderVariants();
+        for (int i = 0; i < solver.bestOrderLength(); i++) {
             if (i > 0) sb.append(',');
-            int cell = solver.bestOrderCells[i];
-            int v = solver.bestOrderVariants[i];
+            int cell = orderCells[i];
+            int v = orderVariants[i];
             sb.append('[').append(cell).append(',').append(v >>> 2)
               .append(',').append(v & 3).append(']');
         }
@@ -295,7 +306,7 @@ public final class Engine implements SolveListener {
      * Keep at most MAX_SAMPLES progress points by halving the resolution each
      * time the buffer fills.
      */
-    private void recordSample(MrvSolver s) {
+    private void recordSample(Search s) {
         if (sampleSkip > 0) { sampleSkip--; return; }
         sampleSkip = sampleStride - 1;
 
@@ -310,8 +321,8 @@ public final class Engine implements SolveListener {
             sampleSkip = sampleStride - 1;
         }
         sMs[sampleCount] = (int) ms();
-        sNodes[sampleCount] = s.nodes;
-        sBest[sampleCount] = s.bestPlaced;
+        sNodes[sampleCount] = s.nodes();
+        sBest[sampleCount] = s.bestPlaced();
         sampleCount++;
     }
 

@@ -35,11 +35,41 @@ slow, or make it incomplete so it can never find a full solution --
 
 ## Search strategy
 
+### Engine
+
+`engine` &middot; choice &middot; learned automatically
+
+Which search engine runs the attempt. They obey different settings.
+
+| Choice | What it does |
+|---|---|
+| **Most-constrained** | Picks the hardest square each step and prunes hard. ~1.4M steps/sec. |
+| **Fixed scan** | Fills a fixed order with a precomputed candidate table. ~50M steps/sec, and reaches further, but runs the same way every time. |
+
+Default: **Most-constrained** (`mrv`)
+
+### Fill order
+
+`fillOrder` &middot; choice &middot; learned automatically
+
+Fixed scan only: the route the solver takes across the board.
+
+Only has an effect when Engine is **Fixed scan**.
+
+| Choice | What it does |
+|---|---|
+| **Banded** | Row scan, then a narrowed scan, then the bottom band column by column, then nested L-shapes. A mistake surfaces sooner where the search is deepest. |
+| **Plain rows** | Straight left-to-right, top-to-bottom. Simplest route, longest wait before a mistake shows. |
+
+Default: **Banded** (`banded`)
+
 ### Cell order
 
 `cellOrder` &middot; choice &middot; learned automatically
 
 How the solver picks which empty square to fill next.
+
+Only has an effect when Engine is **Most-constrained**.
 
 | Choice | What it does |
 |---|---|
@@ -90,6 +120,8 @@ Default: **Most neighbours** (`mostNeighbours`)
 
 Which square the solver is forced to fill first.
 
+Only has an effect when Engine is **Most-constrained**.
+
 | Choice | What it does |
 |---|---|
 | **Let it choose** | No constraint on the opening move. |
@@ -109,6 +141,8 @@ Default: **Let it choose** (`auto`)
 
 The order in which candidate pieces are tried in a square.
 
+Only has an effect when Engine is **Most-constrained**.
+
 | Choice | What it does |
 |---|---|
 | **Natural** | Piece number order. Deterministic and cache friendly. |
@@ -124,6 +158,8 @@ Default: **Natural** (`natural`)
 
 How much randomness is mixed into the piece order.
 
+Only has an effect when Engine is **Most-constrained**.
+
 Range: `0` to `100` in steps of `5`
 
 | End of the slider | What happens |
@@ -138,6 +174,8 @@ Default: `0`
 `candidateCap` &middot; stepped slider &middot; learned automatically
 
 Maximum number of pieces tried in any one square before giving up on it.
+
+Only has an effect when Engine is **Most-constrained**.
 
 Range: 1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 256, 512, 1024
 
@@ -155,6 +193,8 @@ Default: `1024`
 `forwardCheck` &middot; choice &middot; learned automatically
 
 How hard the solver looks for dead ends before committing.
+
+Only has an effect when Engine is **Most-constrained**.
 
 | Choice | What it does |
 |---|---|
@@ -184,6 +224,8 @@ Default: `on`
 `restartPolicy` &middot; choice &middot; learned automatically
 
 Abandon and restart the search to escape an unlucky early choice.
+
+Only has an effect when Engine is **Most-constrained**.
 
 | Choice | What it does |
 |---|---|
