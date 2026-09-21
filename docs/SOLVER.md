@@ -670,6 +670,71 @@ the answer has to be exhaustive.
 The other 678 triples have not been run. Both are cheap, and the ranking machinery for them already
 exists.
 
+### The tail allowance, measured: what finishing the board is worth
+
+The published slip schedules are cumulative *ceilings* on the whole board. Verhaard's permits twelve
+mismatched edges and never a thirteenth, so a board that cannot finish its last cells perfectly
+cannot finish at all. Every result in the tables above sits at exactly twelve breaks — **not one of
+them ever spent fewer** — which is the signature of a search stopped by its allowance rather than by
+the puzzle.
+
+That allowance is costing score, and the arithmetic says so before any run does. Past depth 197
+every cell joins exactly two edges and can break at most one, so an empty cell costs **two** edges
+where a mismatch costs **one**. Any break that buys a placement is worth net +1 or better. A ceiling
+that blocks completion there is not conservative, it is destructive.
+
+`tailFromDepth` and `tailBreakBonus` add a flat allowance on top of the schedule from one depth
+onward. `core.Bench endgame` sweeps it.
+
+| budget | bonus | nodes/sec | score | tiles | perfect | breaks |
+|---|---|---|---|---|---|---|
+| 100M | +0 | 33.3 M | 452 / 480 | 248 / 256 | 205 | 12 |
+| 100M | +2 | 28.6 M | 456 / 480 | 251 / 256 | 205 | 14 |
+| 100M | +5 | 27.7 M | 461 / 480 | 255 / 256 | 205 | 17 |
+| 100M | +6 | 28.6 M | **462 / 480** | **256 / 256** | 205 | 18 |
+| 1B | +0 | 29.4 M | 454 / 480 | 249 / 256 | 207 | 12 |
+| 1B | +2 | 29.7 M | 458 / 480 | 252 / 256 | 207 | 14 |
+| 1B | +3 | 29.4 M | 459 / 480 | 253 / 256 | 207 | 15 |
+| 1B | +4 | 28.2 M | **464 / 480** | **256 / 256** | 207 | 16 |
+| 1B | +5 … +8 | — | 464 / 480 | 256 / 256 | 207 | 16 |
+
+**464 matched edges at a billion nodes, against 456 at ten billion without it.** Eight more edges
+for a tenth of the compute, from a dial that did not exist. The engine had never once finished a
+board; it now finishes at +4 and the score becomes 480 less whatever it broke.
+
+**It saturates, and the saturation is the point.** Beyond +4 nothing changes — the board is already
+finished, so more allowance is simply unused. The dial is not a score knob to be turned up; it is a
+constraint being removed, and once it is gone the search is bounded by the puzzle again.
+
+**Tiles placed stops being a progress measure here, and the `perfect` column is why the tables carry
+it.** At +6 the engine reports 256 / 256. That is a *filled* board, not a solved one: it carries 18
+mismatched edges and `Validator.validateComplete` rejects it. Any board can be filled by paying
+enough breaks. The error-free column does not move at all across the sweep — 205 at every rung at
+100M, 207 at every rung at 1B — because the allowance buys depth in the tail and changes nothing
+about how far the search gets cleanly.
+
+**Where the damage sits, from `core.Bench endgame`'s own report on the 464 board:**
+
+| band | mismatched edges |
+|---|---|
+| 192-223 | 5 |
+| 224-239 | 4 |
+| 240-247 | 4 |
+| 248-255 | 3 |
+
+Twelve of the sixteen are the schedule's own, spread from 192; only the last four came from the tail
+allowance. So the 2026 fleet's report that *"the entire score gap lives in these twelve cells"* does
+**not** hold on this engine — a quarter of ours sits below depth 224.
+
+**What this is not.** 464 is a score board with sixteen deliberately broken edges. It is not a
+solution and not a step toward one. It does, however, move this engine into the same regime as the
+record: a completing search is judged on how few edges it breaks, and the standing record of 470
+completes with ten. Sixteen against ten is the honest distance, and `docs/TYING-THE-RECORD.md` costs
+what closing it takes.
+
+**The default stays at a zero bonus**, so every figure elsewhere in this document still describes the
+engine a reader gets without asking for anything.
+
 ### Fill orders, measured without running a search
 
 Two different things are worth knowing about a fill order, and they disagree, so `core.Bench order`

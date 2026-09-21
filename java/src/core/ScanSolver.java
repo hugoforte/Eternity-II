@@ -384,7 +384,8 @@ public final class ScanSolver implements Search {
         this.numColours = inst.numColours;
         this.nodeBudget = cfg.nodeBudget;
 
-        this.breakCeiling = breakCeilings(cfg.slipSchedule, cells);
+        this.breakCeiling = breakCeilings(cfg.slipSchedule, cells,
+                                          cfg.tailFromDepth, cfg.tailBreakBonus);
         this.slipping = breakCeiling[cells] > 0;
 
         this.order = (cfg.fillOrder == SolverConfig.FILL_ROW_MAJOR)
@@ -740,13 +741,22 @@ public final class ScanSolver implements Search {
      * phase sizes: the real puzzle gets the schedule verbatim, and every other
      * board size gets the same shape.
      */
-    private static int[] breakCeilings(int slipSchedule, int cells) {
+    private static int[] breakCeilings(int slipSchedule, int cells,
+                                       int tailFromDepth, int tailBreakBonus) {
         int[] out = new int[cells + 1];
         int[] schedule = scheduleFor(slipSchedule);
         for (int i = 0; i < schedule.length; i++) {
             int depth = (int) ((long) schedule[i] * cells / SCHEDULE_CELLS);
             if (depth > cells) continue;
             for (int d = depth; d <= cells; d++) out[d] = i + 1;
+        }
+        // The tail allowance rides on top of whatever the schedule permits.
+        // Added as a constant from one depth onward, so the ceiling still only
+        // ever rises -- a board is never asked to give a break back.
+        if (tailBreakBonus > 0) {
+            for (int d = Math.max(0, tailFromDepth); d <= cells; d++) {
+                out[d] += tailBreakBonus;
+            }
         }
         return out;
     }
