@@ -35,7 +35,7 @@ package core;
  * Masks are stored word-major (cellMask[w * cells + cell]) so the per-placement
  * sweep over cells for a single word is contiguous.
  */
-public final class MrvSolver {
+public final class MrvSolver implements Search {
 
     public static final int GREY = Sides.GREY;
 
@@ -586,6 +586,7 @@ public final class MrvSolver {
             if (solutionBoard == null) solutionBoard = new int[cells];
             System.arraycopy(boardVariant, 0, solutionBoard, 0, cells);
             recordBest();
+            if (listener != null) listener.onSolution(this);
             if (verbose) System.out.println("solution #" + solutions + " at node " + nodes);
             return stopAtFirstSolution;
         }
@@ -836,6 +837,24 @@ public final class MrvSolver {
     }
 
     // ------------------------------------------------------------------ accessors
+
+    // --- Search -------------------------------------------------------------
+
+    public void setListener(SolveListener l) { this.listener = l; }
+    public void setSampleEveryNodes(long n) { this.sampleEveryNodes = n; }
+    public void setStopAtFirstSolution(boolean stop) { this.stopAtFirstSolution = stop; }
+    /** Bring the search to a halt at its next node; see {@link Search#requestStop}. */
+    public void requestStop() { this.maxNodes = 1; }
+    public long nodes() { return nodes; }
+    public int bestPlaced() { return bestPlaced; }
+    public int bestMatchedEdges() { return bestMatchedEdges; }
+    public int restarts() { return restarts; }
+    public boolean aborted() { return aborted; }
+    public int[] bestBoard() { return bestBoard; }
+    public int[] solutionBoard() { return solutionBoard; }
+    public int[] bestOrderCells() { return bestOrderCells; }
+    public int[] bestOrderVariants() { return bestOrderVariants; }
+    public int bestOrderLength() { return bestOrderLength; }
 
     public int variantAt(int cell) { return boardVariant[cell]; }
     public int pieceAt(int cell) { return boardVariant[cell] < 0 ? -1 : boardVariant[cell] >>> 2; }

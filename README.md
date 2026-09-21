@@ -57,7 +57,7 @@ Useful variations:
 
 ```sh
 sh build.sh                          # compile only
-sh test.sh                           # run the Java solver test suite (958 checks)
+sh test.sh                           # run the Java solver test suite (1069 checks)
 python3 server/test_server.py        # run the server test suite (45 tests)
 
 python3 server/app.py --port 9000    # different port
