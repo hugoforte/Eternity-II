@@ -1127,7 +1127,7 @@ public final class ScanSolver implements Search {
             if (verbose && (bestPlaced % 16 == 0 || bestPlaced > cells - 40)) {
                 System.out.println("  placed=" + bestPlaced + "/" + cells
                     + " edges=" + bestMatchedEdges
-                    + " perfect=" + deepestErrorFree
+                    + " errorFree=" + deepestErrorFree
                     + " breaks=" + breaks
                     + " nodes=" + nodes + " ms=" + elapsedMs());
             }
