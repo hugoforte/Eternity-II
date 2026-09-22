@@ -49,6 +49,49 @@ solutions, so the shipped engine stays exhaustive and the cross-validation tests
 Switch it on for a score-chasing run: it gives up a third of its throughput and still comes out a
 piece and two edges ahead.
 
+## The best board
+
+Found 22 September 2026. One core, 13.9 hours, 1.1e12 nodes.
+
+| | |
+|---|---|
+| Matched edges | **466 / 480** |
+| Pieces placed | 256 / 256 |
+| Breaks | 14 |
+| Error-free reach | not recorded — this run predates the column |
+
+To repeat it:
+
+```sh
+java -cp java/classes core.ScanSolver 1100000000000 --slipSchedule=verhaard   --quotaSchedule=blackwood --tailFromDepth=244 --tailBreakBonus=2
+```
+
+**This is not a solution.** Fourteen of its edges do not match. Any board can be filled to
+256 / 256 by breaking enough edges, so read the matched edges and never the pieces placed.
+
+Fourteen breaks is the fewest that fills the board at this budget. Thirteen does not fill it, and
+neither does twelve. The record is 470, which is a filled board with ten breaks.
+
+## The four numbers, and what they mean
+
+Every benchmark in this repository reports the same four, in this order:
+
+| number | what it is | can it be bought? |
+|---|---|---|
+| **speed** | nodes per second, where a node is one visit to one square | — |
+| **score** | matched edges out of 480 — the only score the puzzle has | no |
+| **pieces** | pieces placed out of 256 | **yes**, by breaking enough edges |
+| **errorFree** | the most pieces the search ever held with no break anywhere | no |
+
+A **break** is an edge the solver leaves mismatched on purpose so it can keep going. A break costs
+one matched edge; an empty square costs two. So a break that buys a placement gains at least one,
+which is why the solver takes them.
+
+That is also why **pieces placed is not a measure of progress** once breaking is switched on, and
+why the fourth column exists. `errorFree` cannot be bought with breaks, because a break ends it.
+
+[CONTEXT.md](CONTEXT.md) defines these and the rest of the vocabulary.
+
 **Do not read 464 against 470 as "six edges short".** They are on the same scale now — a completing
 run scores exactly `480 - breaks`, and this engine completes with sixteen where the record completes
 with ten — but the steps are not equal in cost. Tightening the ceiling is precisely what makes
