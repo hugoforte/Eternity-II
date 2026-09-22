@@ -51,26 +51,27 @@ piece and two edges ahead.
 
 ## The best board
 
-Found 22 September 2026. One core, 13.9 hours, 1.1e12 nodes.
+| | speed | score | pieces | errorFree | breaks | cost |
+|---|---|---|---|---|---|---|
+| **best so far** | 22.0M | **466 / 480** | 256 / 256 | *pending* | 14 | 13.9 h, 1.1e12 nodes |
+| best in a minute | 28.2M | 464 / 480 | 256 / 256 | 207 / 256 | 16 | 35 s, 1e9 nodes |
+| the app's defaults | 25.9M | 454 / 480 | 249 / 256 | 207 / 256 | 12 | 35 s, 1e9 nodes |
+| world record, 2021 | — | 470 / 480 | 256 / 256 | — | 10 | never beaten |
 
-| | |
-|---|---|
-| Matched edges | **466 / 480** |
-| Pieces placed | 256 / 256 |
-| Breaks | 14 |
-| Error-free reach | not recorded — this run predates the column |
-
-To repeat it:
+One core throughout. To repeat the best board:
 
 ```sh
 java -cp java/classes core.ScanSolver 1100000000000 --slipSchedule=verhaard   --quotaSchedule=blackwood --tailFromDepth=244 --tailBreakBonus=2
 ```
 
+`errorFree` is pending for the top row only: that run finished before the command line reported the
+column. The number is being measured now by an identical run with a longer budget.
+
 **This is not a solution.** Fourteen of its edges do not match. Any board can be filled to
-256 / 256 by breaking enough edges, so read the matched edges and never the pieces placed.
+256 / 256 by breaking enough edges, so read the score and never the pieces.
 
 Fourteen breaks is the fewest that fills the board at this budget. Thirteen does not fill it, and
-neither does twelve. The record is 470, which is a filled board with ten breaks.
+neither does twelve. The record is a filled board with ten.
 
 ## The four numbers, and what they mean
 
