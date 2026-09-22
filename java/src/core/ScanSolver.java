@@ -1072,6 +1072,8 @@ public final class ScanSolver implements Search {
             System.out.println("ScanSolver done: nodes=" + nodes
                 + " solutions=" + solutions
                 + " bestPlaced=" + bestPlaced + "/" + cells
+                + " bestEdges=" + bestMatchedEdges
+                + " errorFree=" + deepestErrorFree + "/" + cells
                 + " bestBreaks=" + bestBreaks
                 + " restarts=" + restarts
                 + " aborted=" + aborted
@@ -1124,6 +1126,8 @@ public final class ScanSolver implements Search {
             if (listener != null) listener.onNewBest(this);
             if (verbose && (bestPlaced % 16 == 0 || bestPlaced > cells - 40)) {
                 System.out.println("  placed=" + bestPlaced + "/" + cells
+                    + " edges=" + bestMatchedEdges
+                    + " errorFree=" + deepestErrorFree
                     + " breaks=" + breaks
                     + " nodes=" + nodes + " ms=" + elapsedMs());
             }
@@ -1447,6 +1451,7 @@ public final class ScanSolver implements Search {
                 + s.bestPlaced + "/" + s.cells + " pieces, "
                 + s.bestMatchedEdges + "/"
                 + Validator.internalEdgeTotal(s.inst) + " matched edges, "
+                + s.deepestErrorFree + "/" + s.cells + " error-free, "
                 + s.bestBreaks + " broken)");
             if (s.bestBoard != null) {
                 String err = Validator.validatePartial(s.inst, s.bestBoard, false,
