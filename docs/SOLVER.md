@@ -240,28 +240,33 @@ first reading was **one entry carrying four variants across four distinct pieces
 openings, none of which a seed could reorder. Every seeded attempt this project had run, and every row
 of the seed tables below, opened the same way.
 
-**The root is now held one entry per variant**, in the order the word's bits would have yielded them,
-so an unseeded search is unchanged — its progress log is identical line for line, node counts
-included; only the index grows from 19429 entries to 19432. A new step, `orderRoot`, is the only
-thing that reorders those entries, from a random stream of its own, and `shuffleRuns` and
-`orderCandidates` skip the root — taking only the draws the root would have cost them held as pairs,
-because their stream carries on to every later key, and whether a run is scrambled is itself a draw.
-So **a seed chooses the opening and changes nothing else**: every perfect run below the root is laid
-out exactly as the previous engine lays it out, under `valueOrder=random`, under `shuffleStrength` and
-with a seed alone, and `ScanVariationTest` pins that with a hash of all of them. It also means
-`randomSeed` on its own now reaches the root under the quota gate, where before it reordered nothing.
+**A seeded engine now gives the first cell a private copy of its class**, appended after every real
+class, and depth 0 reads the copy. The copy's root bucket is held one entry per variant, and a new
+step, `orderRoot`, orders it from a random stream of its own; `shuffleRuns` and `orderCandidates` stop
+short of the copy. So **a seed chooses the opening and changes nothing else**. Every real key — the
+first cell's own class included, which the interior cells share and which holds the corners the search
+reads below the root when grey pruning is off — is built and ordered exactly as without the copy, and
+an unseeded engine has no copy at all: its index is `main`'s, bucket for bucket. `ScanVariationTest`
+pins both with a hash of every perfect run, captured from `main`'s engine, under `valueOrder=random`,
+`valueOrder=reverse`, `shuffleStrength` and a seed alone, on Eternity II and on a generated 6x6 whose
+root spans several words, and across nine restarts. `randomSeed` on its own now reaches the root under
+the quota gate, where before it reordered nothing.
 
 The quota still limits the choice. The gate needs each run's highest-count entries first, so
 `orderRoot` permutes only within a count, and whether the four corners share a count depends on the
 triple. `core.Bench candidates` prints what sixteen seeds actually reach:
 
-| configuration | entries | variants | pieces | seeds 1–16 open with |
-| --- | --- | --- | --- | --- |
-| default | 4 | 4 | 4 | 0 4 8 12 |
-| quota 14,22,5 | 4 | 4 | 4 | 0 4 8 12 |
-| quota 1,7,10 | 4 | 4 | 4 | 0 4 |
+| configuration | variants | pieces | seeds 1–16 open with |
+| --- | --- | --- | --- |
+| default | 4 | 4 | 0 4 8 12 |
+| quota 14,22,5 | 4 | 4 | 0 4 8 12 |
+| quota 1,7,10 | 4 | 4 | 0 4 |
 
 Under `1,7,10` the corners fall into two counts, and seeds reach only the two with the higher one.
+That caps a portfolio too: under the quota with no value order a seed changes nothing but the
+opening, so a `PortfolioSearch` gets at most as many distinct searches as there are reachable
+openings — four under `14,22,5`, two under `1,7,10` — however many workers it runs. Workers that draw
+the same opening run the same search.
 
 **`shuffleStrength` means something different here than in `MrvSolver`.** There it buys transpositions
 in proportion to the length of one cell's candidate list, which is long. A key here holds one to six
@@ -984,8 +989,8 @@ one.
   `MrvSolver` attempts are not parallelised this way; see the first bullet above.
 * **Reaching inside a `(word, mask)` pair.** The seeded permutation reorders a key's entries, which
   leaves the candidates that share a 64-bit word in their natural relative order — about one key in
-  five on Eternity II. The opening move was one of them and no longer is: the root is held one entry
-  per variant, which costs nothing because it is read once. Doing the same everywhere would cost more
+  five on Eternity II. The opening move was one of them and no longer is: a seeded engine reads the
+  root from a private copy held one entry per variant, which costs nothing because it is read once. Doing the same everywhere would cost more
   entries on the hot path and would reshuffle every seeded key, and rotating the mask in the loop would
   fix it for two instructions per candidate examined. Neither done, because the seeds already spread
   below the root without it, so the cost would buy something that has not been shown to be missing.

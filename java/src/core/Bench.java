@@ -66,9 +66,9 @@ package core;
  *
  *  9. "candidates": what the first square offers and which openings seeds
  *     reach, with no search at all.  A seed moves whole (word, mask) entries,
- *     so the root is held one entry per variant; the quota gate still limits
- *     a seed to the openings with the highest count, and that limit depends
- *     on the triple, so each triple gets its own row.
+ *     so a seeded engine holds the root one entry per variant; the quota gate
+ *     still limits a seed to the openings with the highest count, and that
+ *     limit depends on the triple, so each triple gets its own row.
  */
 public final class Bench {
 
@@ -130,11 +130,11 @@ public final class Bench {
      * What the first square offers, and which of those openings seeds reach.
      *
      * A seed permutes whole (word, mask) entries and never the bits inside
-     * one, and the first square's four openings all live in one word, so the
-     * index holds the root one entry per variant -- held as a single entry,
-     * every seed would open the same way however many cores were running.
-     * This prints the effect rather than asserting it: the openings sixteen
-     * seeds actually take.
+     * one, and the first square's four openings all live in one word, so a
+     * seeded engine reads the root from a private copy held one entry per
+     * variant -- as a single entry, every seed would open the same way however
+     * many cores were running.  This prints the effect rather than asserting
+     * it: the openings sixteen seeds actually take.
      *
      * The quota gate is reported per triple because it limits the answer.  It
      * needs a run's highest-count entries first, so a seed may only reorder

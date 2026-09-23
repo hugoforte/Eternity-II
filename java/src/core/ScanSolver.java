@@ -171,14 +171,15 @@ package core;
  * rejected: it puts two instructions on every candidate examined, and the
  * seeds already differ.
  *
- * The key where that matters most is the root.  The first square's openings
- * are the four corners, which share a word, so held as pairs the root would be
- * a single entry and no seed could choose how an attempt begins.  The index
- * therefore holds the root one entry per variant, in the order the word's bits
- * yield them, so an unseeded search reads the same candidates in the same
- * order.  {@link #orderRoot} alone reorders it, from a stream of its own, and
- * the rest of the index takes only the draws the root would cost it as pairs:
- * a seed moves the opening and nothing else.
+ * The key where that matters most is the root.  On Eternity II the first
+ * square's openings are the four corners, which share a word, so the root is a
+ * single entry and no permutation of runs can choose how an attempt begins.
+ * A seeded engine therefore gives the first cell a private copy of its class,
+ * appended after every real one, and depth 0 reads the copy: its root bucket
+ * is held one entry per variant and {@link #orderRoot} alone orders it, from
+ * a stream of its own.  The real keys, the first cell's own class among them,
+ * are built and ordered exactly as they are without a seed, so a seed changes
+ * the opening and nothing else, and an unseeded engine has no copy at all.
  *
  * ------------------------------------------------------------------ restarts
  *
@@ -335,10 +336,14 @@ public final class ScanSolver implements Search {
     private long sampleCountdown;
     private long startNanos;
     private long rngState;
-    /** The bucket read at depth 0, held one entry per variant; see {@link #orderRoot}. */
+    /**
+     * The bucket a seeded engine reads at depth 0, in the private class it
+     * gives the first cell, held one entry per variant; -1 when unseeded.
+     * See {@link #orderRoot}.
+     */
     private final int rootBucket;
-    /** Pairs per quota count the root would be held as; see {@link #drawAsPairs}. */
-    private final int[] rootPairStretches;
+    /** How many buckets orderRun and shuffleRuns order: every real key, never the root's class. */
+    private final int orderedBuckets;
     /** The root's natural order, kept only when a seed is set. */
     private final int[] rootBaseWord;
     private final long[] rootBaseMask;
@@ -462,7 +467,7 @@ public final class ScanSolver implements Search {
 
         // Four border combinations, plus at most a private class and two
         // pinned-neighbour classes for each fixed placement.
-        int maxClasses = 4 + 3 * fixedVariant.length;
+        int maxClasses = 5 + 3 * fixedVariant.length;
         int[] classRight = new int[maxClasses];
         int[] classBottom = new int[maxClasses];
         int[] classVariant = new int[maxClasses];
@@ -487,6 +492,21 @@ public final class ScanSolver implements Search {
             classOfCell[cell] = found;
         }
         this.numClasses = numClasses;
+
+        // A seed chooses the opening, so a seeded engine gives the first cell a
+        // private copy of its own class, appended after every other.  Depth 0
+        // reads the copy, whose root bucket is held one entry per variant and
+        // ordered by orderRoot alone; every real key -- the first cell's own
+        // class included, which later cells still read -- is laid out exactly
+        // as it is without a seed.  An unseeded engine has no copy at all.
+        int rootClass = -1;
+        if (cfg.randomSeed != 0L) {
+            int first = classOfCell[order[0]];
+            rootClass = numClasses++;
+            classRight[rootClass] = classRight[first];
+            classBottom[rootClass] = classBottom[first];
+            classVariant[rootClass] = classVariant[first];
+        }
 
         // --- the quota's colours, and one candidate group per side count -----
         // The gate abandons a run at the first entry that cannot meet the
@@ -523,12 +543,12 @@ public final class ScanSolver implements Search {
         // --- candidate tables ------------------------------------------------
         int pairs = numColours * numColours;
         int buckets = numClasses * pairs;
-        // The bucket the search reads at depth 0.  The fill order puts no
-        // north or west neighbour ahead of any cell, so the first cell has
-        // neither, and both of its sides are read through the sentinel variant
-        // -- the same expression rootKey() evaluates once the board exists.
-        this.rootBucket = classOfCell[order[0]] * pairs
-                        + sideBScaled[numVariants] + sideR[numVariants];
+        // The copy's bucket for the empty board.  The fill order puts every
+        // cell's north and west neighbours ahead of it, so the first cell has
+        // neither, and both of its sides are read through the sentinel variant.
+        this.rootBucket = (rootClass < 0) ? -1
+                        : rootClass * pairs + sideBScaled[numVariants] + sideR[numVariants];
+        this.orderedBuckets = (rootClass < 0) ? buckets : rootClass * pairs;
         long[] bits = new long[buckets * words];
         for (int v = 0; v < numVariants; v++) {
             if ((exist[v >>> 6] & (1L << (v & 63))) == 0L) continue;
@@ -599,22 +619,6 @@ public final class ScanSolver implements Search {
             }
         }
 
-        // The root as every other key is held: one entry per (group, word)
-        // pair, a stretch per quota count.  The index does not hold it that
-        // way, but orderRun and shuffleRuns take their draws as if it did --
-        // see drawAsPairs -- so the stream they share reaches every later key
-        // exactly where it always has.
-        int[] stretches = new int[groups.length];
-        int stretchCount = 0;
-        for (int g = 0; g < groups.length; g++) {
-            int pairsInGroup = 0;
-            for (int w = 0; w < words; w++) {
-                if ((bits[rootBucket * words + w] & groups[g][w]) != 0L) pairsInGroup++;
-            }
-            if (pairsInGroup > 0) stretches[stretchCount++] = pairsInGroup;
-        }
-        this.rootPairStretches = java.util.Arrays.copyOf(stretches, stretchCount);
-
         // --- one CSR, three runs per key, perfect candidates first -----------
         this.keyStart = new int[buckets + 1];
         this.keyPerfectEnd = new int[buckets];
@@ -641,9 +645,8 @@ public final class ScanSolver implements Search {
             at = appendRun(topBits, b, words, groups, groupCount, at);
         }
 
-        // The root's natural order, kept for orderRoot to rebuild from.  Only a
-        // seed reorders the root, so an unseeded engine carries no copy.
-        if (cfg.randomSeed != 0L) {
+        // The root's natural order, kept for orderRoot to rebuild from.
+        if (rootBucket >= 0) {
             int rootLength = keyPerfectEnd[rootBucket] - keyStart[rootBucket];
             this.rootBaseWord = new int[rootLength];
             this.rootBaseMask = new long[rootLength];
@@ -699,6 +702,7 @@ public final class ScanSolver implements Search {
             westSlot[d] = (c == 0) ? cells : depthOf[cell - 1];
             classBase[d] = classOfCell[cell] * pairs;
         }
+        if (rootClass >= 0) classBase[0] = rootClass * pairs;
 
         // Every internal edge is checked exactly once, when the cell south or
         // east of it goes down, so how many are joined up is a constant per
@@ -714,10 +718,6 @@ public final class ScanSolver implements Search {
         this.chosen = new int[cells + 1];
         this.quotaCumulative = quota ? new int[cells + 1] : null;
         reset();
-        if (rootKey() != rootBucket) {
-            throw new IllegalStateException("the index split bucket " + rootBucket
-                + " as the root, but the search reads bucket " + rootKey() + " at depth 0");
-        }
     }
 
     /** How many (group, word) pairs of one bucket hold any candidate at all. */
@@ -802,16 +802,8 @@ public final class ScanSolver implements Search {
     private void shuffleRuns(long seed) {
         long state = seed ^ 0x9E3779B97F4A7C15L;
         if (state == 0L) state = 1L;
-        int buckets = keyPerfectEnd.length;
-        for (int b = 0; b < buckets; b++) {
-            // The root belongs to orderRoot.  Its draws are still taken -- the
-            // steps shuffleRange takes over one run of this many pairs -- so
-            // every later key sees the stream it would with the root held as
-            // pairs.  Its slipped runs are empty, and take none.
-            if (b == rootBucket) {
-                for (int i = rootPairs() - 1; i > 0; i--) state = xorshift64star(state);
-                continue;
-            }
+        // The root's private class is orderRoot's, and comes last.
+        for (int b = 0; b < orderedBuckets; b++) {
             state = shuffleRange(keyStart[b], keyPerfectEnd[b], state);
             state = shuffleRange(keyPerfectEnd[b], keyLeftBreakEnd[b], state);
             state = shuffleRange(keyLeftBreakEnd[b], keyStart[b + 1], state);
@@ -1058,12 +1050,8 @@ public final class ScanSolver implements Search {
         if (baseWord != null) {
             System.arraycopy(baseWord, 0, keyWord, 0, keyWord.length);
             System.arraycopy(baseMask, 0, keyMask, 0, keyMask.length);
-            for (int b = 0; b < keyPerfectEnd.length; b++) {
-                // The root belongs to orderRoot, below; only its draws are taken here.
-                if (b == rootBucket) {
-                    drawAsPairs();
-                    continue;
-                }
+            // The root's private class is orderRoot's, and comes last.
+            for (int b = 0; b < orderedBuckets; b++) {
                 orderRun(keyStart[b], keyPerfectEnd[b]);
                 orderRun(keyPerfectEnd[b], keyLeftBreakEnd[b]);
                 orderRun(keyLeftBreakEnd[b], keyStart[b + 1]);
@@ -1075,15 +1063,16 @@ public final class ScanSolver implements Search {
     /**
      * Lay the root's entries out in this attempt's opening order.
      *
-     * The root is ordered here and nowhere else: {@link #shuffleRuns} and
-     * {@link #orderCandidates} skip it, taking only the draws it would have
-     * cost them, so every key below the root is laid out exactly as it is
-     * without a seed.  A seed therefore changes the opening and nothing else,
-     * which is what makes a seeded attempt a test of diversity at the root
-     * rather than of the reordering further down.
+     * The root's private class is ordered here and nowhere else: it comes
+     * after every real key, and {@link #shuffleRuns} and
+     * {@link #orderCandidates} stop short of it, so every real key is laid out
+     * exactly as it is without a seed.  A seed therefore changes the opening
+     * and nothing else, which is what makes a seeded attempt a test of
+     * diversity at the root rather than of the reordering further down.
      *
      * Any non-zero seed reaches it, whether or not {@link #seeded} is set and
-     * under the quota gate too.  It reorders only within a stretch of equal
+     * under the quota gate too; {@code valueOrder=reverse} does not reverse
+     * it.  It reorders only within a stretch of equal
      * quota count, like everything else, so a triple that gives the corners
      * different counts leaves a seed only the highest-count ones to choose
      * from.  It draws from a stream of its own, which reset() restores, so a
@@ -1144,33 +1133,6 @@ public final class ScanSolver implements Search {
         int end = start + 1;
         while (end < to && quotaCount[end] == quotaCount[start]) end++;
         return end;
-    }
-
-    /** How many (group, word) pairs the root would be held as; see drawAsPairs. */
-    private int rootPairs() {
-        int pairs = 0;
-        for (int i = 0; i < rootPairStretches.length; i++) pairs += rootPairStretches[i];
-        return pairs;
-    }
-
-    /**
-     * Take the draws {@link #orderRun} would take for the root were it held as
-     * every other key is, one entry per (group, word) pair, and move nothing.
-     *
-     * The root is ordered by {@link #orderRoot} alone, but orderRun's stream
-     * carries on to every key after it, and whether a run of two or more
-     * pairs is scrambled is itself a draw.  Taking the root's share keeps each
-     * later key exactly where it would be, so how the root is held changes no
-     * other key's order -- under a triple whose counts split the corners too.
-     */
-    private void drawAsPairs() {
-        if (rootPairs() < 2) return;
-        boolean scramble = cfg.valueOrder == SolverConfig.VALUE_RANDOM
-                        || (cfg.shuffleStrength > 0 && nextInt(100) < cfg.shuffleStrength);
-        if (!scramble) return;
-        for (int s = 0; s < rootPairStretches.length; s++) {
-            for (int i = rootPairStretches[s] - 1; i > 0; i--) nextInt(i + 1);
-        }
     }
 
     /** Reverse and/or shuffle one stretch of entries in place. */
@@ -1621,7 +1583,8 @@ public final class ScanSolver implements Search {
      * Both of the first square's neighbours are read through {@code chosen},
      * and the sentinel slot an off-board neighbour points at is only ever
      * read, never written, so this answers the same on a fresh solver as on
-     * one that has already run.
+     * one that has already run.  On a seeded engine it is the private root
+     * bucket.
      */
     private int rootKey() {
         int topScaled = sideBScaled[chosen[northSlot[0]]];
@@ -1631,9 +1594,7 @@ public final class ScanSolver implements Search {
 
     /**
      * The variants the first square offers, in the order the search will try
-     * them.  Counting these as well as the entries is the whole point: many
-     * variants carried by one entry is exactly the shape a seed cannot
-     * disturb.
+     * them -- the opening move first.
      */
     public int[] rootCandidates() {
         int key = rootKey();
