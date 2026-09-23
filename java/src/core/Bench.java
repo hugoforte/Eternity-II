@@ -10,6 +10,7 @@ package core;
  *   java -cp out core.Bench budget 20000000  # the same, at equal node count
  *   java -cp out core.Bench slip        # edge slipping off vs on, equal nodes
  *   java -cp out core.Bench order       # fill-order frontiers, no search
+ *   java -cp out core.Bench candidates  # what the root offers a seed, no search
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
  *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
@@ -62,6 +63,12 @@ package core;
  *     and the best, the worst and Blackwood's are then actually run, so the
  *     table shows both what the piece set allows and what the search does with
  *     it.
+ *
+ *  9. "candidates": what the first square offers and which openings seeds
+ *     reach, with no search at all.  A seed moves whole (word, mask) entries,
+ *     so a seeded engine holds the root one entry per variant; the quota gate
+ *     still limits a seed to the openings with the highest count, and that
+ *     limit depends on the triple, so each triple gets its own row.
  */
 public final class Bench {
 
@@ -72,6 +79,7 @@ public final class Bench {
             try { seconds = Long.parseLong(args[1]); } catch (Throwable e) { }
         }
         if (which.equals("all") || which.equals("order")) orderBenchmark();
+        if (which.equals("all") || which.equals("candidates")) candidatesBenchmark();
         if (which.equals("all") || which.equals("solvable")) solvableBenchmark();
         if (which.equals("all") || which.equals("eternity")) eternityBenchmark(seconds);
         if (which.equals("all") || which.equals("engines")) engineBenchmark(seconds);
@@ -114,6 +122,81 @@ public final class Bench {
 
     private static long parseLong(String s, long dflt) {
         try { return Long.parseLong(s); } catch (Throwable e) { return dflt; }
+    }
+
+    // ------------------------------------------------------------ the root
+
+    /**
+     * What the first square offers, and which of those openings seeds reach.
+     *
+     * A seed permutes whole (word, mask) entries and never the bits inside
+     * one, and the first square's four openings all live in one word, so a
+     * seeded engine reads the root from a private copy held one entry per
+     * variant -- as a single entry, every seed would open the same way however
+     * many cores were running.  This prints the effect rather than asserting
+     * it: the openings sixteen seeds actually take.
+     *
+     * The quota gate is reported per triple because it limits the answer.  It
+     * needs a run's highest-count entries first, so a seed may only reorder
+     * within a count, and a triple that gives the openings different counts
+     * leaves the lower ones to the unseeded order alone.
+     */
+    private static void candidatesBenchmark() {
+        System.out.println("=================================================================");
+        System.out.println(" The root: what the first square offers, and what seeds reach");
+        System.out.println("=================================================================");
+        System.out.println(" configuration            variants  pieces  seeds 1-16 open with");
+
+        reportRoot("default", new SolverConfig());
+
+        SolverConfig quota = new SolverConfig();
+        quota.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        reportRoot("quota 14,22,5", quota);
+
+        SolverConfig other = new SolverConfig();
+        other.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        other.quotaColours = "1,7,10";
+        reportRoot("quota 1,7,10", other);
+
+        System.out.println();
+        System.out.println(" The root is held one entry per variant, so a seed can choose the");
+        System.out.println(" opening.  Under the quota it chooses only among the openings with");
+        System.out.println(" the highest count, because the gate needs those first -- which is");
+        System.out.println(" why a triple can leave some openings to the unseeded order alone.");
+        System.out.println();
+    }
+
+    private static void reportRoot(String label, SolverConfig cfg) {
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+        int[] variants = s.rootCandidates();
+
+        boolean[] seen = new boolean[s.cellTotal()];
+        int pieces = 0;
+        for (int i = 0; i < variants.length; i++) {
+            int piece = variants[i] >>> 2;
+            if (!seen[piece]) { seen[piece] = true; pieces++; }
+        }
+
+        // Which openings sixteen seeds actually take, listed in the root's
+        // natural order so two rows can be read against each other.
+        boolean[] opened = new boolean[variants.length];
+        for (long seed = 1L; seed <= 16L; seed++) {
+            SolverConfig seeded = cfg.copy();
+            seeded.randomSeed = seed;
+            int opening = new ScanSolver(Instance.eternity2(), seeded).rootCandidates()[0];
+            for (int i = 0; i < variants.length; i++) {
+                if (variants[i] == opening) opened[i] = true;
+            }
+        }
+        StringBuilder reached = new StringBuilder();
+        for (int i = 0; i < variants.length; i++) {
+            if (opened[i]) reached.append(variants[i]).append(' ');
+        }
+
+        System.out.println(" " + pad(label, 24)
+            + " " + pad("" + variants.length, 9)
+            + " " + pad("" + pieces, 7)
+            + " " + reached.toString().trim());
     }
 
     // ---------------------------------------------------------------- orders

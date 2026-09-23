@@ -26,6 +26,7 @@ java -cp java/classes core.Bench              # benchmarks
 java -cp java/classes core.Bench engines 20   # the two engines, 20s each
 java -cp java/classes core.Bench slip         # edge slipping off vs on, equal nodes
 java -cp java/classes core.Bench order        # fill-order frontiers, no search
+java -cp java/classes core.Bench candidates   # what the root offers a seed, no search
 java -cp java/classes core.Bench seeds 20 100000000   # 20 seeds at one budget
 java -cp java/classes core.Bench quota         # the colour quota off vs on, equal nodes
 java -cp java/classes core.Bench colours      # which three colours the quota tracks
@@ -230,8 +231,42 @@ keep their relative order. On Eternity II, 467 keys offer anything at all, 263 o
 two candidates or more, and 203 of those spread the choice over more than one entry — so about four
 keys in five are reorderable and the rest are fixed. Rotating the mask inside the loop would reach
 the remainder, at the cost of two instructions on every candidate examined; it was not worth it,
-because the seeds already differ by a lot (below). One visible consequence: the four corner pieces
-are the four lowest variants and share a word, so **the opening move is the same for every seed**.
+because the seeds already differ by a lot (below). The one key where it mattered is the root: the four
+corner pieces are the four lowest variants and share a word, so held that way **the opening move would
+be the same for every seed** — and until the change below, it was.
+
+`core.Bench candidates` was added to print that consequence rather than leave it asserted, and its
+first reading was **one entry carrying four variants across four distinct pieces**: four genuine
+openings, none of which a seed could reorder. Every seeded attempt this project had run, and every row
+of the seed tables below, opened the same way.
+
+**A seeded engine now gives the first cell a private copy of its class**, appended after every real
+class, and depth 0 reads the copy. The copy's root bucket is held one entry per variant, and a new
+step, `orderRoot`, orders it from a random stream of its own; `shuffleRuns` and `orderCandidates` stop
+short of the copy. So **a seed chooses the opening and changes nothing else**. Every real key — the
+first cell's own class included, which the interior cells share and which holds the corners the search
+reads below the root when grey pruning is off — is built and ordered exactly as without the copy, and
+an unseeded engine has no copy at all: its index is `main`'s, bucket for bucket. `ScanVariationTest`
+pins both with a hash of every perfect run, captured from `main`'s engine, under `valueOrder=random`,
+`valueOrder=reverse`, `shuffleStrength` and a seed alone, on Eternity II and on a generated 6x6 whose
+root spans several words, and across nine restarts. `randomSeed` on its own now reaches the root under
+the quota gate, where before it reordered nothing.
+
+The quota still limits the choice. The gate needs each run's highest-count entries first, so
+`orderRoot` permutes only within a count, and whether the four corners share a count depends on the
+triple. `core.Bench candidates` prints what sixteen seeds actually reach:
+
+| configuration | variants | pieces | seeds 1–16 open with |
+| --- | --- | --- | --- |
+| default | 4 | 4 | 0 4 8 12 |
+| quota 14,22,5 | 4 | 4 | 0 4 8 12 |
+| quota 1,7,10 | 4 | 4 | 0 4 |
+
+Under `1,7,10` the corners fall into two counts, and seeds reach only the two with the higher one.
+That caps a portfolio too: under the quota with no value order a seed changes nothing but the
+opening, so a `PortfolioSearch` gets at most as many distinct searches as there are reachable
+openings — four under `14,22,5`, two under `1,7,10` — however many workers it runs. Workers that draw
+the same opening run the same search.
 
 **`shuffleStrength` means something different here than in `MrvSolver`.** There it buys transpositions
 in proportion to the length of one cell's candidate list, which is long. A key here holds one to six
@@ -464,6 +499,11 @@ different descent for free, and a second deterministic configuration where there
 > vary the order", so a bare CLI run and everything in `core.Bench` measure the plain descent and
 > reproduce the numbers below exactly. The lab's own default is a real seed, because there every
 > attempt should differ.
+
+**The seed tables in this section were measured while every seed shared one opening move** — the
+root was a single entry until the change described under "A seed, and restarts". A seed that now
+moves the opening explores a different tree, so seeded rows will not reproduce exactly from the
+current engine; the unseeded rows still do.
 
 ### The same seeds at bigger budgets, where sampling stops paying and then costs
 
@@ -850,10 +890,11 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `MrvSolverTest` | The MRV machinery — see below. |
 | `FillOrderTest` | The fixed orders, structurally: the north-and-west invariant at every size from 2 to 20, the exact phase boundaries of the banded order at 16×16, and both frontier measures. No search is run. |
 | `ScanSolverTest` | What only the scan engine can get wrong: that it places in exactly its fill order, that the hint piece appears where it must and nowhere else, that an impossible fixed placement is rejected with the cell and reason in the message, that the node budget is not overshot, and that a second run of the same solver is identical. |
-| `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree. |
+| `ProgressLogTest` | What a verbose attempt writes down: that a board filled with breaks reaches the log, that a rise in the error-free reach reaches it too, and that a quiet attempt still writes nothing. |
+| `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree, what the root offers, and that a seed chooses the opening and changes nothing else. |
 | `ColourQuotaTest` | The colour quota: Blackwood's ramp reproduced at 16x16 and scaled elsewhere, that the tracked colours really are offered first (which is what makes abandoning a run sound), that the floor is met at every depth of the board the engine returns, that the gate only ever *removes* solutions from an exhaustive run, and that a colour the instance cannot count is refused with the colour in the message. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
-| `PortfolioSearchTest` | That several workers never do worse than one of them alone, that nodes are genuinely summed across workers, that a solve still validates, and that the same seed and worker count reproduce exactly. |
+| `PortfolioSearchTest` | That several workers never do worse than one of them alone, that nodes are genuinely summed across workers, that a solve still validates, and that the same seed and worker count reproduce exactly — including when two workers finish level, which the result settles by index rather than by thread timing. |
 | `CrossValidationTest` | **The strongest evidence:** exhaustive solution counts vs the naive reference solver, for both fast engines, with slipping off. |
 
 ### The three tests that matter most
@@ -948,8 +989,10 @@ one.
   `MrvSolver` attempts are not parallelised this way; see the first bullet above.
 * **Reaching inside a `(word, mask)` pair.** The seeded permutation reorders a key's entries, which
   leaves the candidates that share a 64-bit word in their natural relative order — about one key in
-  five on Eternity II, including the opening move. Rotating the mask in the loop would fix it for two
-  instructions per candidate examined. Not done, because the seeds already spread without it, so the
-  instructions would be spent to buy something that has not been shown to be missing.
+  five on Eternity II. The opening move was one of them and no longer is: a seeded engine reads the
+  root from a private copy held one entry per variant, which costs nothing because it is read once. Doing the same everywhere would cost more
+  entries on the hot path and would reshuffle every seeded key, and rotating the mask in the loop would
+  fix it for two instructions per candidate examined. Neither done, because the seeds already spread
+  below the root without it, so the cost would buy something that has not been shown to be missing.
 * **Eight seeds or one long descent** — measured; see [the overnight eight-arm run](#the-overnight-eight-arm-run).
   It is a tie, and both routes stop at the same score.

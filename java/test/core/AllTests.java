@@ -29,6 +29,7 @@ public final class AllTests {
         ScanSolverTest.run();
         ScanVariationTest.run();
         EdgeSlippingTest.run();
+        ProgressLogTest.run();
         ColourQuotaTest.run();
         RepairTest.run();
         RootScreenTest.run();

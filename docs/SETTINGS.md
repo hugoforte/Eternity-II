@@ -226,7 +226,7 @@ Default: **Let it choose** (`auto`)
 
 `valueOrder` &middot; choice &middot; learned automatically
 
-The order in which candidate pieces are tried in a square. This is the only thing the seed changes on the fixed scan.
+The order in which candidate pieces are tried in a square. Under the colour quota a seed on its own changes only the opening move on the fixed scan; this is what reaches the rest.
 
 Only has an effect when Engine is **Most-constrained** or **Fixed scan**.
 

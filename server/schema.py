@@ -231,7 +231,7 @@ SETTINGS = [
         "default": "natural",
         "tunable": True,
         "activeWhen": {"key": "engine", "values": ["mrv", "scan"]},
-        "blurb": "The order in which candidate pieces are tried in a square. This is the only thing the seed changes on the fixed scan.",
+        "blurb": "The order in which candidate pieces are tried in a square. Under the colour quota a seed on its own changes only the opening move on the fixed scan; this is what reaches the rest.",
         "options": [
             {"value": "natural", "label": "Natural",
              "blurb": "Piece number order. Deterministic and cache friendly."},
