@@ -810,6 +810,53 @@ what closing it takes.
 **The default stays at a zero bonus**, so every figure elsewhere in this document still describes the
 engine a reader gets without asking for anything.
 
+### The record rule, measured: the deepest board is the best-scoring one
+
+`ScanSolver` keeps the deepest board and lets matched edges decide only ties at equal depth. With
+slipping on, breaks pile up in the tail, so a shallower board that spent far fewer breaks could in
+principle outscore the deepest one and go unreported. The engine now also keeps the best-scoring
+node it visited (`bestScoreBoard`, scored on the hot path as `checksBefore[depth] - breaks` and held
+against `Validator.matchedEdges` by `EdgeSlippingTest`), and `core.Bench record <nodes> <seeds>
+<profile>` prints the two side by side. Seed 0 is the plain descent; the rest use `valueOrder=random`,
+which is what makes seeds diverge under the colour quota.
+
+Four profiles, twenty seeds each, three budgets: 240 attempts. `lab` is `slipSchedule=verhaard`
+alone; `week` adds `quotaSchedule=blackwood` with `14,22,5` and `tailFromDepth=244`; `weekB` is the
+same with `1,7,10`; `endgame` is `week` with `tailBreakBonus=4`.
+
+| profile | budget | seeds at 240+ | filled | best edges | seeds where the kept board is outscored |
+|---|---|---|---|---|---|
+| `lab` | 1e7 / 1e8 / 1e9 | 10 / 18 / 20 | 0 | 444 / 450 / 452 | **0 / 0 / 0** |
+| `week` | 1e7 / 1e8 / 1e9 | 11 / 20 / 20 | 0 | 452 / 456 / 458 | **0 / 0 / 0** |
+| `weekB` | 1e7 / 1e8 / 1e9 | 0 / 2 / 7 | 0 | 179 / 454 / 456 | **0 / 0 / 0** |
+| `endgame` | 1e7 / 1e8 / 1e9 | 11 / 20 / 20 | 0 / 0 / 6 | 460 / 460 / **465** | **0 / 0 / 0** |
+
+**The gap is zero in every one of the 240 attempts, so depth-first recording costs nothing.** The
+arithmetic says why. The score never falls along a descent: past depth 197 every placement adds two
+checks and at most one break, so each step is worth +1 or +2, and the best-scoring node of any
+subtree is a leaf. For a shallower leaf to win it must sit k cells higher with at least 2k+1 fewer
+breaks. But every kept board in the table sits exactly at its depth's break ceiling, and the ceiling
+rises by one break per several cells while the checks rise by two per cell, so a deeper board at the
+ceiling always outscores a shallower one at the ceiling. A leaf below the ceiling would have to be
+stuck with allowance to spare, and the search never found one that scored higher.
+
+Two things the table shows on the side. `weekB`'s random value order reaches the tail in only seven
+of twenty seeds at a billion nodes, against twenty of twenty for `14,22,5`: the second triple is far
+more sensitive to candidate order under the gate. And `endgame` seed 3 at a billion nodes finished
+the board with **fifteen breaks, for 465 / 480**, one edge past the 464 the tail-allowance section
+records. Reproduce it with:
+
+```sh
+java -cp java/classes core.ScanSolver 1000000000 --slipSchedule=verhaard \
+  --quotaSchedule=blackwood --quotaColours=14,22,5 --tailFromDepth=244 --tailBreakBonus=4 \
+  --valueOrder=random --randomSeed=3
+```
+
+The second record is gated behind the shallowest depth whose checks alone exceed the score on
+record, so nearly every node pays one compare and no subtract. Measured at 1e8 nodes on
+`slipSchedule=verhaard`, four interleaved pairs against a build of `origin/main`, it is within the
+run-to-run noise; the ungated form was about 8% slower.
+
 ### Fill orders, measured without running a search
 
 Two different things are worth knowing about a fill order, and they disagree, so `core.Bench order`

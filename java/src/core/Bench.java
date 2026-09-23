@@ -14,6 +14,7 @@ package core;
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
  *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
+ *   java -cp out core.Bench record 100000000 20 week  # what the record rule discards
  *
  * Several different questions are measured, because they have different
  * answers:
@@ -69,6 +70,16 @@ package core;
  *     so a seeded engine holds the root one entry per variant; the quota gate
  *     still limits a seed to the openings with the highest count, and that
  *     limit depends on the triple, so each triple gets its own row.
+ *
+ * 10. "record": what the record rule throws away.  ScanSolver keeps the
+ *     deepest board and lets edges decide only ties, so a shallower board
+ *     that spent far fewer breaks can outscore it and go unreported.  Each
+ *     row runs one seed and prints the board the engine keeps beside the
+ *     best-scoring node it visited, and the gap between them in edges.  A gap
+ *     of zero nearly everywhere means depth-first recording costs nothing.
+ *     The profile picks the configuration: "lab" is the lab's defaults, "week"
+ *     and "weekB" the long run's two colour triples, "endgame" the same with
+ *     the tail allowance that finishes the board.
  */
 public final class Bench {
 
@@ -109,6 +120,12 @@ public final class Bench {
             int from = (args.length > 2) ? (int) parseLong(args[2], 244L) : 244;
             int maxBonus = (args.length > 3) ? (int) parseLong(args[3], 8L) : 8;
             endgameBenchmark(budget, from, maxBonus);
+        }
+        if (which.equals("record")) {
+            long budget = (args.length > 1) ? parseLong(args[1], 100000000L) : 100000000L;
+            int count = (args.length > 2) ? (int) parseLong(args[2], 20L) : 20;
+            String profile = (args.length > 3) ? args[3] : "week";
+            recordBenchmark(budget, count, profile);
         }
         if (which.equals("seeds")) {
             int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
@@ -406,6 +423,83 @@ public final class Bench {
         System.out.println(" unjoined edges from " + (256 - placed) + " empty cells: "
                            + (480 - s.bestMatchedEdges - (bad.length / 2)));
         System.out.println();
+    }
+
+    // -------------------------------------------------------------- record rule
+
+    /**
+     * The board the engine keeps against the best-scoring node it visited,
+     * one seed per row.  Seed 0 is the plain descent; the rest vary the
+     * candidate order with {@code valueOrder=random}, which is what makes
+     * seeds diverge under the colour quota (see the diversity cap in
+     * docs/SOLVER.md).
+     */
+    private static void recordBenchmark(long budget, int count, String profile) {
+        SolverConfig base = recordProfile(profile);
+        if (base == null) {
+            System.out.println("unknown profile '" + profile
+                               + "': expected lab, week, weekB or endgame");
+            return;
+        }
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: the deepest board vs the best-scoring node");
+        System.out.println(" profile=" + profile + "  budget=" + budget + "  seeds=" + count);
+        System.out.println(" " + base.toJson());
+        System.out.println("=================================================================");
+        System.out.println(" seed    ms      nodes/sec    kept: placed edges breaks   best: placed edges breaks   gap");
+
+        int positive = 0, maxGap = 0;
+        for (int i = 0; i < count; i++) {
+            SolverConfig cfg = base.copy();
+            cfg.randomSeed = i;
+            if (i > 0) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+            ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+            s.maxNodes = budget;
+            long t0 = System.nanoTime();
+            s.solve();
+            long ms = (System.nanoTime() - t0) / 1000000L;
+            int gap = s.bestScore - s.bestMatchedEdges;
+            if (gap > 0) positive++;
+            if (gap > maxGap) maxGap = gap;
+            System.out.println(" " + pad("" + i, 7)
+                + " " + pad("" + ms, 7)
+                + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+                + " " + pad(s.bestPlaced + "/256", 13)
+                + " " + pad("" + s.bestMatchedEdges, 5)
+                + " " + pad("" + s.bestBreaks, 8)
+                + " " + pad(s.bestScorePlaced + "/256", 13)
+                + " " + pad("" + s.bestScore, 5)
+                + " " + pad("" + s.bestScoreBreaks, 8)
+                + " " + gap);
+            String err = Validator.validatePartial(Instance.eternity2(), s.bestScoreBoard,
+                                                   false, s.bestScoreBreaks);
+            if (err != null) System.out.println("   INVALID BEST-SCORING BOARD: " + err);
+            if (Validator.matchedEdges(Instance.eternity2(), s.bestScoreBoard) != s.bestScore) {
+                System.out.println("   SCORE MISMATCH: validator counts "
+                    + Validator.matchedEdges(Instance.eternity2(), s.bestScoreBoard));
+            }
+        }
+        System.out.println();
+        System.out.println(" seeds where the kept board is not the best-scoring one: "
+                           + positive + "/" + count + ", largest gap " + maxGap + " edges");
+        System.out.println();
+    }
+
+    private static SolverConfig recordProfile(String profile) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        if (profile.equals("lab")) return cfg;
+        cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        cfg.tailFromDepth = 244;
+        if (profile.equals("week")) { cfg.quotaColours = BLACKWOOD_COLOURS; return cfg; }
+        if (profile.equals("weekB")) { cfg.quotaColours = "1,7,10"; return cfg; }
+        if (profile.equals("endgame")) {
+            cfg.quotaColours = BLACKWOOD_COLOURS;
+            cfg.tailBreakBonus = 4;
+            return cfg;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------ colour quota
