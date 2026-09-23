@@ -28,6 +28,14 @@ package core;
  * promotes itself. The accessors used for the final report are only ever
  * read after {@link #solve} has joined every thread, which is unconditionally
  * safe.
+ *
+ * A worker that draws level with the champion takes over only if its index is
+ * lower.  Without that, a tie would leave the crown with whichever worker got
+ * there first in wall-clock time.  With it, whatever order the workers reach a
+ * shared best in, the champion ends as the lowest-indexed of them: the same
+ * seed and worker count report the same board, and it is the last board the
+ * live listener was shown.  A solution is the exception, and needs none --
+ * the first one ends the attempt.
  */
 public final class PortfolioSearch implements Search {
 
@@ -53,7 +61,8 @@ public final class PortfolioSearch implements Search {
         return Math.max(1, availableCores);
     }
 
-    private static long mixSeed(long base, int i) {
+    /** The seed worker {@code i} runs under; package-visible so tests can rebuild a worker. */
+    static long mixSeed(long base, int i) {
         long x = base + (long) i * 0x9E3779B97F4A7C15L;
         x ^= (x >>> 30); x *= 0xBF58476D1CE4E5B9L;
         x ^= (x >>> 27); x *= 0x94D049BB133111EBL;
@@ -61,15 +70,19 @@ public final class PortfolioSearch implements Search {
         return x;
     }
 
-    /** Promote {@code idx} to champion if it now leads on (placed, edges). */
+    /**
+     * Promote {@code idx} to champion if it now leads on (placed, edges), or
+     * draws level with a champion of higher index.
+     */
     private void maybePromote(int idx) {
         if (idx == championIndex) return;
         synchronized (championLock) {
             ScanSolver cand = workers[idx];
             ScanSolver champ = workers[championIndex];
-            if (cand.bestPlaced > champ.bestPlaced
-                    || (cand.bestPlaced == champ.bestPlaced
-                        && cand.bestMatchedEdges > champ.bestMatchedEdges)) {
+            int byDepth = Integer.compare(cand.bestPlaced, champ.bestPlaced);
+            int byEdges = Integer.compare(cand.bestMatchedEdges, champ.bestMatchedEdges);
+            if (byDepth > 0 || (byDepth == 0 && (byEdges > 0
+                                                 || (byEdges == 0 && idx < championIndex)))) {
                 championIndex = idx;
             }
         }
