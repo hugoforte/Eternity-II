@@ -17,6 +17,7 @@ public final class PortfolioSearchTest {
         itSumsNodesAcrossEveryWorker();
         itSolvesGeneratedInstances();
         itIsRepeatablePerSeed();
+        itBreaksATieByWorkerIndex();
 
         T.endSection();
     }
@@ -93,6 +94,53 @@ public final class PortfolioSearchTest {
     }
 
     // ----------------------------------------------------------- repeatability
+
+    /**
+     * Two workers that finish level must not be told apart by thread timing.
+     * Each worker is rebuilt on its own and run to the same budget first, which
+     * both proves this configuration really does produce a tie and says which
+     * board the portfolio owes: the lowest-indexed of the leaders.  The
+     * portfolio is then run several times, because a timing race would pass
+     * any single run by luck.
+     */
+    private static void itBreaksATieByWorkerIndex() {
+        Instance inst = Instance.eternity2();
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.nodeBudget = 300000L;
+        cfg.randomSeed = 777L;
+        int workers = 3;
+
+        ScanSolver[] alone = new ScanSolver[workers];
+        int leader = 0, leaders = 0;
+        for (int i = 0; i < workers; i++) {
+            SolverConfig wc = cfg.copy();
+            wc.randomSeed = PortfolioSearch.mixSeed(cfg.randomSeed, i);
+            alone[i] = new ScanSolver(inst, wc);
+            alone[i].solve();
+        }
+        for (int i = 0; i < workers; i++) {
+            int byDepth = Integer.compare(alone[i].bestPlaced, alone[leader].bestPlaced);
+            int byEdges = Integer.compare(alone[i].bestMatchedEdges, alone[leader].bestMatchedEdges);
+            if (byDepth > 0 || (byDepth == 0 && byEdges > 0)) leader = i;
+        }
+        for (int i = 0; i < workers; i++) {
+            if (alone[i].bestPlaced == alone[leader].bestPlaced
+                    && alone[i].bestMatchedEdges == alone[leader].bestMatchedEdges) leaders++;
+        }
+        T.check("this seed really does leave two workers level at the top", leaders >= 2,
+                "only " + leaders + " worker(s) reached " + alone[leader].bestPlaced
+                + " pieces / " + alone[leader].bestMatchedEdges + " edges");
+
+        boolean always = true;
+        for (int run = 0; run < 5; run++) {
+            PortfolioSearch team = new PortfolioSearch(inst, cfg, workers);
+            team.solve();
+            if (!java.util.Arrays.equals(alone[leader].bestBoard, team.bestBoard())) always = false;
+        }
+        T.check("every run reports the lowest-indexed leader's board, whoever got there first",
+                always, "expected worker " + leader + "'s board");
+    }
 
     private static void itIsRepeatablePerSeed() {
         // Same base seed, same worker count -> the same per-worker seeds

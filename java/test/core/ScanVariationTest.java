@@ -29,6 +29,10 @@ public final class ScanVariationTest {
         itSendsDifferentSeedsDownDifferentTrees();
         itNeverChangesWhatExists();
         itReportsWhatTheRootOffers();
+        itLetsTheSeedChooseTheOpening();
+        itChangesNothingButTheOpening();
+        itKeepsItsOpeningAcrossAReset();
+        itLeavesEveryKeyBelowTheRootWhereMainHasIt();
         T.endSection();
 
         T.section("ScanVariationTest: restarts");
@@ -71,14 +75,9 @@ public final class ScanVariationTest {
     // ------------------------------------------------------------------- the root
 
     /**
-     * What the first square offers, which is the one place a seed provably
-     * cannot reach: the seed permutes whole entries and a run of one entry has
-     * nothing to permute.  The engine has to be able to say how many it holds,
-     * because otherwise the claim can only be argued.
-     *
-     * The count is tied back to the search rather than left free-standing --
-     * whatever the accessor reports, the variant the engine actually placed
-     * first has to be one of the ones it offered.
+     * What the first square offers, tied back to the search rather than left
+     * free-standing: whatever the accessor reports, the variant the engine
+     * actually placed first has to be one of the ones it offered.
      */
     private static void itReportsWhatTheRootOffers() {
         ScanSolver s = new ScanSolver(Instance.eternity2());
@@ -88,11 +87,6 @@ public final class ScanVariationTest {
         int[] root = s.rootCandidates();
         T.check("the first square offers at least one candidate", root.length > 0,
                 "rootCandidates was empty");
-        T.check("its entries never outnumber the variants they hold",
-                s.rootEntryCount() <= root.length,
-                "entries=" + s.rootEntryCount() + " variants=" + root.length);
-        T.check("a run holding candidates is a run with entries in it",
-                s.rootEntryCount() > 0, "entries=" + s.rootEntryCount());
 
         boolean offered = false;
         for (int i = 0; i < root.length; i++) {
@@ -101,6 +95,99 @@ public final class ScanVariationTest {
         T.check("the variant the search placed first is one the root offered",
                 offered, "placed " + s.bestOrderVariants[0]
                        + ", root offered " + root.length + " variants");
+    }
+
+    /**
+     * The four openings share a word, so a seed reaches them only because the
+     * root is held one entry per variant -- and under the quota gate a seed on
+     * its own reaches nothing else.  Checked on the configuration the long runs
+     * actually use.
+     */
+    private static void itLetsTheSeedChooseTheOpening() {
+        int[] natural = sorted(new ScanSolver(Instance.eternity2(), longRun(0L)).rootCandidates());
+
+        boolean[] opened = new boolean[1024];
+        int distinct = 0;
+        boolean sameSet = true;
+        for (long seed = 1L; seed <= 16L; seed++) {
+            int[] root = new ScanSolver(Instance.eternity2(), longRun(seed)).rootCandidates();
+            if (!opened[root[0]]) { opened[root[0]] = true; distinct++; }
+            if (!java.util.Arrays.equals(sorted(root), natural)) sameSet = false;
+        }
+
+        T.check("under the quota gate, a seed on its own now reaches the opening move",
+                distinct > 1, "sixteen seeds all opened with " + natural[0]);
+        T.eq("and sixteen seeds between them use every opening the root offers",
+             natural.length, distinct);
+        T.check("while no seed adds or removes an opening", sameSet);
+    }
+
+    /**
+     * The property that makes a seeded attempt a clean test of diversity at
+     * the root: the seed moves the opening and nothing else.  A seed that
+     * happens to keep the natural opening must then search exactly as the
+     * unseeded engine does -- if any key below the root had been reordered,
+     * the two boards would part company.
+     */
+    private static void itChangesNothingButTheOpening() {
+        ScanSolver unseeded = run(longRun(0L), 300000L);
+        int naturalOpening = unseeded.rootCandidates()[0];
+
+        long keeps = 0L, moves = 0L;
+        for (long seed = 1L; seed <= 64L && (keeps == 0L || moves == 0L); seed++) {
+            int opening = new ScanSolver(Instance.eternity2(), longRun(seed)).rootCandidates()[0];
+            if (opening == naturalOpening && keeps == 0L) keeps = seed;
+            if (opening != naturalOpening && moves == 0L) moves = seed;
+        }
+        T.check("some seed in 64 keeps the natural opening", keeps != 0L);
+        T.check("and some seed moves it", moves != 0L);
+        if (keeps == 0L || moves == 0L) return;
+
+        ScanSolver same = run(longRun(keeps), 300000L);
+        T.eqIntArray("a seed that keeps the opening searches exactly as the unseeded engine does",
+                     unseeded.bestBoard, same.bestBoard);
+        T.eq("down to its error-free reach", unseeded.deepestErrorFree, same.deepestErrorFree);
+
+        ScanSolver other = run(longRun(moves), 300000L);
+        T.eq("an attempt opens with the candidate its root offers first",
+             other.rootCandidates()[0], other.bestOrderVariants[0]);
+        T.check("and a seed that moves the opening reaches a different board",
+                !java.util.Arrays.equals(unseeded.bestBoard, other.bestBoard));
+    }
+
+    /**
+     * The order of every key below the root is exactly the order main's engine
+     * lays out for the same configuration, pinned by a hash of every perfect
+     * run the engine reports at every depth and colour pair except the root's.
+     *
+     * This is the half of "a seed changes the opening and nothing else" that
+     * the other checks cannot see.  orderRun and shuffleRuns share a random
+     * stream across every key, and the root skips them, so a skipped root that
+     * forgot to take its draws would shift every key after it -- which is
+     * what happens under a triple whose counts split the corners, and why two
+     * of the four cases use one.  Updating a constant here means every seeded
+     * measurement made before stops reproducing, so it takes a reason.
+     */
+    private static void itLeavesEveryKeyBelowTheRootWhereMainHasIt() {
+        T.eq("shuffleStrength under the 1,7,10 quota, seed 0",
+             0x48417207b5d2cdafL, belowRoot(seeded("1,7,10", false, 50, 0L)));
+        T.eq("shuffleStrength under the 1,7,10 quota, seed 3",
+             0xa9334c7c0fa8446bL, belowRoot(seeded("1,7,10", false, 50, 3L)));
+        T.eq("valueOrder=random under the 14,22,5 quota, seed 3",
+             0x1c245a0e05f04619L, belowRoot(seeded("14,22,5", true, 0, 3L)));
+        T.eq("no quota, a seed alone",
+             0x54cad8e86a6205ffL, belowRoot(seeded(null, false, 0, 5L)));
+    }
+
+    /** reset() has to rebuild the opening order from scratch, not reshuffle it. */
+    private static void itKeepsItsOpeningAcrossAReset() {
+        ScanSolver s = new ScanSolver(Instance.eternity2(), longRun(7L));
+        int[] before = s.rootCandidates();
+        s.reset();
+        T.eqIntArray("a reset leaves the seeded opening order exactly as it was",
+                     before, s.rootCandidates());
+        T.eqIntArray("and a second solver with the same seed lays it out the same way",
+                     before, new ScanSolver(Instance.eternity2(), longRun(7L)).rootCandidates());
     }
 
     // --------------------------------------------------------------- reproducible
@@ -303,6 +390,64 @@ public final class ScanVariationTest {
         cfg.shuffleStrength = strength;
         cfg.randomSeed = seed;
         return cfg;
+    }
+
+    /**
+     * The configuration the long runs use: Verhaard's ceiling with a tail
+     * allowance, under Blackwood's quota, and no value-order setting -- so a
+     * seed on its own reorders the opening and nothing below it.
+     */
+    private static SolverConfig longRun(long seed) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        cfg.tailFromDepth = 244;
+        cfg.tailBreakBonus = 1;
+        cfg.randomSeed = seed;
+        return cfg;
+    }
+
+    private static SolverConfig seeded(String quotaColours, boolean random,
+                                       int strength, long seed) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        if (quotaColours != null) {
+            cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+            cfg.quotaColours = quotaColours;
+        }
+        if (random) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+        cfg.shuffleStrength = strength;
+        cfg.randomSeed = seed;
+        return cfg;
+    }
+
+    /**
+     * An FNV-1a hash of every perfect run below the root, in the order the
+     * search reads it.  The root is the one key with both sides grey.
+     */
+    private static long belowRoot(SolverConfig cfg) {
+        Instance inst = Instance.eternity2();
+        ScanSolver s = new ScanSolver(inst, cfg);
+        long h = 0xcbf29ce484222325L;
+        for (int depth = 0; depth < s.cellTotal(); depth++) {
+            for (int top = 0; top < inst.numColours; top++) {
+                for (int left = 0; left < inst.numColours; left++) {
+                    if (top == 0 && left == 0) continue;
+                    int[] order = s.candidateOrderAtDepth(depth, left, top);
+                    for (int i = 0; i < order.length; i++) h = (h ^ order[i]) * 0x100000001b3L;
+                    h = (h ^ -1L) * 0x100000001b3L;
+                }
+            }
+        }
+        return h;
+    }
+
+    private static int[] sorted(int[] values) {
+        int[] copy = values.clone();
+        java.util.Arrays.sort(copy);
+        return copy;
     }
 
     private static ScanSolver run(SolverConfig cfg, long budget) {

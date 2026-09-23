@@ -64,12 +64,11 @@ package core;
  *     table shows both what the piece set allows and what the search does with
  *     it.
  *
- *  9. "candidates": what the first square offers a seed, with no search at
- *     all.  A seed permutes whole (word, mask) entries and never the bits
- *     inside a word, so a root holding one entry opens every attempt the same
- *     way however many cores are running.  Printed for the default, for the
- *     quota gate and for both, because the gate is the one thing that could
- *     split that entry.
+ *  9. "candidates": what the first square offers and which openings seeds
+ *     reach, with no search at all.  A seed moves whole (word, mask) entries,
+ *     so the root is held one entry per variant; the quota gate still limits
+ *     a seed to the openings with the highest count, and that limit depends
+ *     on the triple, so each triple gets its own row.
  */
 public final class Bench {
 
@@ -128,50 +127,47 @@ public final class Bench {
     // ------------------------------------------------------------ the root
 
     /**
-     * What the first square offers, and therefore what a seed can do with it.
+     * What the first square offers, and which of those openings seeds reach.
      *
-     * A seed permutes whole (word, mask) entries within a run and never the
-     * bits inside a word, so a run holding one entry cannot be permuted: every
-     * seed then opens its attempt with the same placement, whatever it does
-     * below.  The quota gate is reported beside the default because it is the
-     * one thing that could break the tie -- it splits a bucket into one entry
-     * per colour count, so a word whose pieces differ in count would arrive as
-     * several entries.  On Eternity II it does not: the four openings carry the
-     * same count and stay in one group.  That is a result worth printing rather
-     * than an assumption worth making, which is why both rows are here.
+     * A seed permutes whole (word, mask) entries and never the bits inside
+     * one, and the first square's four openings all live in one word, so the
+     * index holds the root one entry per variant -- held as a single entry,
+     * every seed would open the same way however many cores were running.
+     * This prints the effect rather than asserting it: the openings sixteen
+     * seeds actually take.
      *
-     * Reported rather than asserted.  The point of the mode is that the number
-     * stops being something the documentation claims and starts being
-     * something the engine prints.
+     * The quota gate is reported per triple because it limits the answer.  It
+     * needs a run's highest-count entries first, so a seed may only reorder
+     * within a count, and a triple that gives the openings different counts
+     * leaves the lower ones to the unseeded order alone.
      */
     private static void candidatesBenchmark() {
         System.out.println("=================================================================");
-        System.out.println(" The root: what the first square offers a seed");
+        System.out.println(" The root: what the first square offers, and what seeds reach");
         System.out.println("=================================================================");
-        System.out.println(" configuration          entries   variants   pieces   a seed can");
+        System.out.println(" configuration            variants  pieces  seeds 1-16 open with");
 
-        SolverConfig plain = new SolverConfig();
-        reportRoot("default", plain);
+        reportRoot("default", new SolverConfig());
 
         SolverConfig quota = new SolverConfig();
         quota.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
-        reportRoot("quota=blackwood", quota);
+        reportRoot("quota 14,22,5", quota);
 
-        SolverConfig slipped = new SolverConfig();
-        slipped.slipSchedule = SolverConfig.SLIP_VERHAARD;
-        slipped.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
-        reportRoot("+ slip=verhaard", slipped);
+        SolverConfig other = new SolverConfig();
+        other.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        other.quotaColours = "1,7,10";
+        reportRoot("quota 1,7,10", other);
 
         System.out.println();
-        System.out.println(" A run of one entry is the degenerate case: the seed has nothing");
-        System.out.println(" to reorder, so every attempt opens with the same placement and");
-        System.out.println(" parallel seeds share the root of the tree.");
+        System.out.println(" The root is held one entry per variant, so a seed can choose the");
+        System.out.println(" opening.  Under the quota it chooses only among the openings with");
+        System.out.println(" the highest count, because the gate needs those first -- which is");
+        System.out.println(" why a triple can leave some openings to the unseeded order alone.");
         System.out.println();
     }
 
     private static void reportRoot(String label, SolverConfig cfg) {
         ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
-        int entries = s.rootEntryCount();
         int[] variants = s.rootCandidates();
 
         boolean[] seen = new boolean[s.cellTotal()];
@@ -181,14 +177,26 @@ public final class Bench {
             if (!seen[piece]) { seen[piece] = true; pieces++; }
         }
 
-        String verdict = (entries < 2)
-            ? "nothing -- every seed opens the same way"
-            : "reorder " + entries + " entries";
-        System.out.println(" " + pad(label, 22)
-            + " " + pad("" + entries, 9)
-            + " " + pad("" + variants.length, 10)
-            + " " + pad("" + pieces, 8)
-            + " " + verdict);
+        // Which openings sixteen seeds actually take, listed in the root's
+        // natural order so two rows can be read against each other.
+        boolean[] opened = new boolean[variants.length];
+        for (long seed = 1L; seed <= 16L; seed++) {
+            SolverConfig seeded = cfg.copy();
+            seeded.randomSeed = seed;
+            int opening = new ScanSolver(Instance.eternity2(), seeded).rootCandidates()[0];
+            for (int i = 0; i < variants.length; i++) {
+                if (variants[i] == opening) opened[i] = true;
+            }
+        }
+        StringBuilder reached = new StringBuilder();
+        for (int i = 0; i < variants.length; i++) {
+            if (opened[i]) reached.append(variants[i]).append(' ');
+        }
+
+        System.out.println(" " + pad(label, 24)
+            + " " + pad("" + variants.length, 9)
+            + " " + pad("" + pieces, 7)
+            + " " + reached.toString().trim());
     }
 
     // ---------------------------------------------------------------- orders
