@@ -29,13 +29,13 @@ package core;
  * read after {@link #solve} has joined every thread, which is unconditionally
  * safe.
  *
- * A worker that draws level with the champion takes over only if its index is
- * lower.  Without that, a tie would leave the crown with whichever worker got
- * there first in wall-clock time.  With it, whatever order the workers reach a
- * shared best in, the champion ends as the lowest-indexed of them: the same
- * seed and worker count report the same board, and it is the last board the
- * live listener was shown.  A solution is the exception, and needs none --
- * the first one ends the attempt.
+ * The live champion is for the live display, and is only as good as the
+ * interleaving that produced it.  The result is settled again once every
+ * worker has finished, on the same order -- deeper, then more matched edges,
+ * then the lower index -- so the same seed and worker count always report the
+ * same board, and a solution, which ranks above everything, is reported by
+ * the lowest-indexed worker that found one.  A board shown live can therefore
+ * be replaced at the end by a different board of the same score.
  */
 public final class PortfolioSearch implements Search {
 
@@ -71,21 +71,25 @@ public final class PortfolioSearch implements Search {
     }
 
     /**
-     * Promote {@code idx} to champion if it now leads on (placed, edges), or
-     * draws level with a champion of higher index.
+     * Promote {@code idx} to champion if it now ranks ahead of the champion.
+     *
+     * Every new best comes through here, the champion's own included: a
+     * champion that skipped the lock would publish nothing, so a rival could
+     * read a stale score and take a crown it had not earned.
      */
     private void maybePromote(int idx) {
-        if (idx == championIndex) return;
         synchronized (championLock) {
-            ScanSolver cand = workers[idx];
-            ScanSolver champ = workers[championIndex];
-            int byDepth = Integer.compare(cand.bestPlaced, champ.bestPlaced);
-            int byEdges = Integer.compare(cand.bestMatchedEdges, champ.bestMatchedEdges);
-            if (byDepth > 0 || (byDepth == 0 && (byEdges > 0
-                                                 || (byEdges == 0 && idx < championIndex)))) {
-                championIndex = idx;
-            }
+            if (ahead(idx, championIndex)) championIndex = idx;
         }
+    }
+
+    /** Whether worker {@code a}'s best ranks above {@code b}'s: deeper, better scored, lower index. */
+    private boolean ahead(int a, int b) {
+        int byDepth = Integer.compare(workers[a].bestPlaced, workers[b].bestPlaced);
+        if (byDepth != 0) return byDepth > 0;
+        int byEdges = Integer.compare(workers[a].bestMatchedEdges, workers[b].bestMatchedEdges);
+        if (byEdges != 0) return byEdges > 0;
+        return a < b;
     }
 
     private final class WorkerListener implements SolveListener {
@@ -138,12 +142,24 @@ public final class PortfolioSearch implements Search {
             threads[i] = new Thread(w::solve, "scan-worker-" + i);
             threads[i].start();
         }
+        boolean finished = true;
         for (Thread t : threads) {
             try {
                 t.join();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            if (t.isAlive()) finished = false;
+        }
+        // Settled only when every worker has stopped: the joins are what make
+        // their final fields safe to read, and an interrupted join leaves some
+        // still running, when the live champion is all there is.
+        if (finished) {
+            int best = 0;
+            for (int i = 1; i < workers.length; i++) {
+                if (ahead(i, best)) best = i;
+            }
+            championIndex = best;
         }
         long solutions = 0;
         for (ScanSolver w : workers) solutions += w.solutions;

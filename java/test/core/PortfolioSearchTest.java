@@ -90,6 +90,8 @@ public final class PortfolioSearchTest {
             T.check("the reported result carries no breaks", team.bestBreaks() == 0);
             T.check("the portfolio does not report itself as budget-bound",
                     !team.aborted());
+            T.eqIntArray("the best board it reports is the solution it reports",
+                         team.solutionBoard(), team.bestBoard());
         }
     }
 
