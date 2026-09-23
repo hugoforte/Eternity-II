@@ -63,6 +63,13 @@ package core;
  *     and the best, the worst and Blackwood's are then actually run, so the
  *     table shows both what the piece set allows and what the search does with
  *     it.
+ *
+ *  9. "candidates": what the first square offers a seed, with no search at
+ *     all.  A seed permutes whole (word, mask) entries and never the bits
+ *     inside a word, so a root holding one entry opens every attempt the same
+ *     way however many cores are running.  Printed for the default, for the
+ *     quota gate and for both, because the gate is the one thing that could
+ *     split that entry.
  */
 public final class Bench {
 
@@ -72,8 +79,8 @@ public final class Bench {
         if (args.length > 1) {
             try { seconds = Long.parseLong(args[1]); } catch (Throwable e) { }
         }
-        if (which.equals("all") || which.equals("candidates")) candidatesBenchmark();
         if (which.equals("all") || which.equals("order")) orderBenchmark();
+        if (which.equals("all") || which.equals("candidates")) candidatesBenchmark();
         if (which.equals("all") || which.equals("solvable")) solvableBenchmark();
         if (which.equals("all") || which.equals("eternity")) eternityBenchmark(seconds);
         if (which.equals("all") || which.equals("engines")) engineBenchmark(seconds);
@@ -126,9 +133,12 @@ public final class Bench {
      * A seed permutes whole (word, mask) entries within a run and never the
      * bits inside a word, so a run holding one entry cannot be permuted: every
      * seed then opens its attempt with the same placement, whatever it does
-     * below.  The quota gate is reported beside the default because it changes
-     * the answer -- it splits a bucket into one entry per colour count, so a
-     * word whose pieces differ in count arrives as several entries.
+     * below.  The quota gate is reported beside the default because it is the
+     * one thing that could break the tie -- it splits a bucket into one entry
+     * per colour count, so a word whose pieces differ in count would arrive as
+     * several entries.  On Eternity II it does not: the four openings carry the
+     * same count and stay in one group.  That is a result worth printing rather
+     * than an assumption worth making, which is why both rows are here.
      *
      * Reported rather than asserted.  The point of the mode is that the number
      * stops being something the documentation claims and starts being
@@ -168,7 +178,7 @@ public final class Bench {
         int pieces = 0;
         for (int i = 0; i < variants.length; i++) {
             int piece = variants[i] >>> 2;
-            if (piece < seen.length && !seen[piece]) { seen[piece] = true; pieces++; }
+            if (!seen[piece]) { seen[piece] = true; pieces++; }
         }
 
         String verdict = (entries < 2)

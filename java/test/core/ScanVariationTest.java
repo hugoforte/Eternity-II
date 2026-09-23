@@ -42,6 +42,34 @@ public final class ScanVariationTest {
 
     // -------------------------------------------------------------- off by default
 
+    private static void itIgnoresTheSeedUnlessAsked() {
+        ScanSolver plain = new ScanSolver(Instance.eternity2());
+        T.check("the default engine is not seeded", !plain.seeded());
+
+        SolverConfig a = eternity(0, 0);
+        a.randomSeed = 7L;
+        SolverConfig b = eternity(0, 0);
+        b.randomSeed = 999999L;
+        ScanSolver first = run(a, 300000L);
+        ScanSolver second = run(b, 300000L);
+
+        T.check("neither reports itself seeded with valueOrder and shuffleStrength left alone",
+                !first.seeded() && !second.seeded());
+
+        // This assertion used to read "the seed alone changes nothing", which was
+        // true of this side alone.  Upstream's shuffleRuns makes the seed alone
+        // reorder each key's candidate run, and that is deliberate: it is what
+        // gives every PortfolioSearch worker a different descent from the same
+        // configuration.  So two seeds must now differ, and the reproducibility
+        // this file also asserts is anchored on a fixed seed rather than on the
+        // seed being ignored.
+        T.check("the seed alone now changes the descent, which is what a portfolio needs",
+                !java.util.Arrays.equals(first.bestBoard, second.bestBoard)
+                        || first.nodes != second.nodes);
+    }
+
+    // ------------------------------------------------------------------- the root
+
     /**
      * What the first square offers, which is the one place a seed provably
      * cannot reach: the seed permutes whole entries and a run of one entry has
@@ -73,32 +101,6 @@ public final class ScanVariationTest {
         T.check("the variant the search placed first is one the root offered",
                 offered, "placed " + s.bestOrderVariants[0]
                        + ", root offered " + root.length + " variants");
-    }
-
-    private static void itIgnoresTheSeedUnlessAsked() {
-        ScanSolver plain = new ScanSolver(Instance.eternity2());
-        T.check("the default engine is not seeded", !plain.seeded());
-
-        SolverConfig a = eternity(0, 0);
-        a.randomSeed = 7L;
-        SolverConfig b = eternity(0, 0);
-        b.randomSeed = 999999L;
-        ScanSolver first = run(a, 300000L);
-        ScanSolver second = run(b, 300000L);
-
-        T.check("neither reports itself seeded with valueOrder and shuffleStrength left alone",
-                !first.seeded() && !second.seeded());
-
-        // This assertion used to read "the seed alone changes nothing", which was
-        // true of this side alone.  Upstream's shuffleRuns makes the seed alone
-        // reorder each key's candidate run, and that is deliberate: it is what
-        // gives every PortfolioSearch worker a different descent from the same
-        // configuration.  So two seeds must now differ, and the reproducibility
-        // this file also asserts is anchored on a fixed seed rather than on the
-        // seed being ignored.
-        T.check("the seed alone now changes the descent, which is what a portfolio needs",
-                !java.util.Arrays.equals(first.bestBoard, second.bestBoard)
-                        || first.nodes != second.nodes);
     }
 
     // --------------------------------------------------------------- reproducible

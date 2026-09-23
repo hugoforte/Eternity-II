@@ -26,6 +26,7 @@ java -cp java/classes core.Bench              # benchmarks
 java -cp java/classes core.Bench engines 20   # the two engines, 20s each
 java -cp java/classes core.Bench slip         # edge slipping off vs on, equal nodes
 java -cp java/classes core.Bench order        # fill-order frontiers, no search
+java -cp java/classes core.Bench candidates   # what the root offers a seed, no search
 java -cp java/classes core.Bench seeds 20 100000000   # 20 seeds at one budget
 java -cp java/classes core.Bench quota         # the colour quota off vs on, equal nodes
 java -cp java/classes core.Bench colours      # which three colours the quota tracks
@@ -232,6 +233,12 @@ keys in five are reorderable and the rest are fixed. Rotating the mask inside th
 the remainder, at the cost of two instructions on every candidate examined; it was not worth it,
 because the seeds already differ by a lot (below). One visible consequence: the four corner pieces
 are the four lowest variants and share a word, so **the opening move is the same for every seed**.
+
+`core.Bench candidates` prints that consequence rather than leaving it asserted. The first square
+holds **one entry carrying four variants across four distinct pieces**, under the default, under the
+quota gate, and under both — so the root offers four genuine openings and a seed can reorder none of
+them. The quota gate is the one thing that could have split that entry, since it lays a bucket out
+as one entry per colour count; it does not, because all four corners carry the same count.
 
 **`shuffleStrength` means something different here than in `MrvSolver`.** There it buys transpositions
 in proportion to the length of one cell's candidate list, which is long. A key here holds one to six
@@ -850,7 +857,8 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `MrvSolverTest` | The MRV machinery — see below. |
 | `FillOrderTest` | The fixed orders, structurally: the north-and-west invariant at every size from 2 to 20, the exact phase boundaries of the banded order at 16×16, and both frontier measures. No search is run. |
 | `ScanSolverTest` | What only the scan engine can get wrong: that it places in exactly its fill order, that the hint piece appears where it must and nowhere else, that an impossible fixed placement is rejected with the cell and reason in the message, that the node budget is not overshot, and that a second run of the same solver is identical. |
-| `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree. |
+| `ProgressLogTest` | What a verbose attempt writes down: that a board filled with breaks reaches the log, that a rise in the error-free reach reaches it too, and that a quiet attempt still writes nothing. |
+| `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree, and what the root offers a seed. |
 | `ColourQuotaTest` | The colour quota: Blackwood's ramp reproduced at 16x16 and scaled elsewhere, that the tracked colours really are offered first (which is what makes abandoning a run sound), that the floor is met at every depth of the board the engine returns, that the gate only ever *removes* solutions from an exhaustive run, and that a colour the instance cannot count is refused with the colour in the message. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
 | `PortfolioSearchTest` | That several workers never do worse than one of them alone, that nodes are genuinely summed across workers, that a solve still validates, and that the same seed and worker count reproduce exactly. |

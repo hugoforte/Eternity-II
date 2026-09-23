@@ -113,10 +113,18 @@ public final class ProgressLogTest {
      * That summary reports the same figures at the end, so an assertion made
      * against the whole log would pass on a run that printed nothing while it
      * was working -- which is the exact fault these checks are here for.
+     *
+     * A missing marker is raised rather than shrugged off: returning the whole
+     * log would leave every caller asserting against the summary line and
+     * quietly passing, which is the failure this helper exists to prevent.
      */
     private static String progressIn(String log) {
         int end = log.indexOf("ScanSolver done");
-        return end < 0 ? log : log.substring(0, end);
+        if (end < 0) {
+            throw new IllegalStateException("no end-of-attempt summary in the log, so "
+                + "progress lines cannot be told apart from it; log was:\n" + log);
+        }
+        return log.substring(0, end);
     }
 
     /** Run the solver with stdout captured, and hand back everything it wrote. */
