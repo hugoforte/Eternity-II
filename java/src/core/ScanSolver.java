@@ -1099,7 +1099,10 @@ public final class ScanSolver implements Search {
         // mismatched reports every one of its cells.  Guarded on depth first:
         // after warm-up that compare fails at nearly every node, so the breaks
         // test is seldom reached at all.
-        if (depth > deepestErrorFree && breaks == 0) deepestErrorFree = depth;
+        if (depth > deepestErrorFree && breaks == 0) {
+            deepestErrorFree = depth;
+            reportErrorFreeReach();
+        }
         if (depth == cells) return complete(breaks);
 
         nodes++;
@@ -1124,13 +1127,7 @@ public final class ScanSolver implements Search {
             bestPlaced = depth;
             recordBest(depth, breaks);
             if (listener != null) listener.onNewBest(this);
-            if (verbose && (bestPlaced % 16 == 0 || bestPlaced > cells - 40)) {
-                System.out.println("  placed=" + bestPlaced + "/" + cells
-                    + " edges=" + bestMatchedEdges
-                    + " errorFree=" + deepestErrorFree
-                    + " breaks=" + breaks
-                    + " nodes=" + nodes + " ms=" + elapsedMs());
-            }
+            reportBest(breaks);
         }
 
         int topScaled = sideBScaled[chosen[northSlot[depth]]];
@@ -1244,6 +1241,7 @@ public final class ScanSolver implements Search {
                 bestPlaced = cells;
                 recordBest(cells, breaks);
                 if (listener != null) listener.onNewBest(this);
+                reportBest(breaks);
             }
             return false;
         }
@@ -1278,6 +1276,47 @@ public final class ScanSolver implements Search {
         bestMatchedEdges = Validator.matchedEdges(inst, bestBoard);
         bestPerfectTiles = Validator.perfectTiles(inst, bestOrderCells,
                                                   bestOrderVariants, depth);
+    }
+
+    /**
+     * Write the board just recorded to the progress log.
+     *
+     * Shallow boards are skipped because the first two hundred are noise, and
+     * a filled board always clears the depth test -- which is what makes
+     * {@link #complete}'s call to this the one that matters.  A board filled
+     * with breaks is recorded there rather than in {@link #dfs}, and once it
+     * sets {@link #bestPlaced} to the cell count no later board can satisfy
+     * dfs's test either, so without this call the log falls silent for the
+     * remainder of the attempt.
+     */
+    private void reportBest(int breaks) {
+        if (!verbose) return;
+        if (bestPlaced % 16 != 0 && bestPlaced <= cells - 40) return;
+        System.out.println("  placed=" + bestPlaced + "/" + cells
+            + " edges=" + bestMatchedEdges
+            + " errorFree=" + deepestErrorFree
+            + " breaks=" + breaks
+            + " nodes=" + nodes + " ms=" + elapsedMs());
+    }
+
+    /**
+     * Write a rise in the error-free reach to the progress log.
+     *
+     * The reach belongs to the search rather than to any one board, so no
+     * board line is guaranteed to follow it -- an attempt that has already
+     * recorded a deeper slipped board records nothing more, and the rise
+     * would stay invisible until the attempt ended.
+     *
+     * Every rise is reported, with none of the depth filtering {@link
+     * #reportBest} does.  The reach only ever increases, so an attempt can
+     * emit at most one line per cell however long it runs, and any threshold
+     * cheap enough to silence the opening burst also silences a late rise
+     * that fell just under it -- which is the fault being fixed.
+     */
+    private void reportErrorFreeReach() {
+        if (!verbose) return;
+        System.out.println("  errorFree=" + deepestErrorFree + "/" + cells
+            + " nodes=" + nodes + " ms=" + elapsedMs());
     }
 
     // ------------------------------------------------------------------ Search
@@ -1391,6 +1430,59 @@ public final class ScanSolver implements Search {
         int[] trimmed = new int[at];
         System.arraycopy(out, 0, trimmed, 0, at);
         return trimmed;
+    }
+
+    /**
+     * The key the search reads at depth 0, formed exactly as {@link #dfs}
+     * forms it.
+     *
+     * Both of the first square's neighbours are read through {@code chosen},
+     * and the sentinel slot an off-board neighbour points at is only ever
+     * read, never written, so this answers the same on a fresh solver as on
+     * one that has already run.
+     */
+    private int rootKey() {
+        int topScaled = sideBScaled[chosen[northSlot[0]]];
+        int left = sideR[chosen[westSlot[0]]];
+        return classBase[0] + topScaled + left;
+    }
+
+    /**
+     * How many (word, mask) entries the first square's run holds -- all a
+     * seed has to work with at the root.
+     *
+     * {@link #shuffleRuns} and {@link #orderRun} permute entries within a run
+     * and never the bits within a word, so a run of a single entry cannot be
+     * permuted at all: every seed then opens its attempt with the same
+     * placement, however much the descents diverge below it.
+     */
+    public int rootEntryCount() {
+        int key = rootKey();
+        return keyStart[key + 1] - keyStart[key];
+    }
+
+    /**
+     * The variants the first square offers, in the order the search will try
+     * them.  Counting these as well as the entries is the whole point: many
+     * variants carried by one entry is exactly the shape a seed cannot
+     * disturb.
+     */
+    public int[] rootCandidates() {
+        int key = rootKey();
+        int count = 0;
+        for (int i = keyStart[key]; i < keyStart[key + 1]; i++) {
+            count += Long.bitCount(keyMask[i]);
+        }
+        int[] out = new int[count];
+        int at = 0;
+        for (int i = keyStart[key]; i < keyStart[key + 1]; i++) {
+            long bits = keyMask[i];
+            while (bits != 0L) {
+                out[at++] = (keyWord[i] << 6) + Long.numberOfTrailingZeros(bits);
+                bits &= bits - 1L;
+            }
+        }
+        return out;
     }
 
     /** Whether the candidate order depends on {@code randomSeed}. */

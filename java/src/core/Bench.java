@@ -10,6 +10,7 @@ package core;
  *   java -cp out core.Bench budget 20000000  # the same, at equal node count
  *   java -cp out core.Bench slip        # edge slipping off vs on, equal nodes
  *   java -cp out core.Bench order       # fill-order frontiers, no search
+ *   java -cp out core.Bench candidates  # what the root offers a seed, no search
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
  *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
@@ -71,6 +72,7 @@ public final class Bench {
         if (args.length > 1) {
             try { seconds = Long.parseLong(args[1]); } catch (Throwable e) { }
         }
+        if (which.equals("all") || which.equals("candidates")) candidatesBenchmark();
         if (which.equals("all") || which.equals("order")) orderBenchmark();
         if (which.equals("all") || which.equals("solvable")) solvableBenchmark();
         if (which.equals("all") || which.equals("eternity")) eternityBenchmark(seconds);
@@ -114,6 +116,69 @@ public final class Bench {
 
     private static long parseLong(String s, long dflt) {
         try { return Long.parseLong(s); } catch (Throwable e) { return dflt; }
+    }
+
+    // ------------------------------------------------------------ the root
+
+    /**
+     * What the first square offers, and therefore what a seed can do with it.
+     *
+     * A seed permutes whole (word, mask) entries within a run and never the
+     * bits inside a word, so a run holding one entry cannot be permuted: every
+     * seed then opens its attempt with the same placement, whatever it does
+     * below.  The quota gate is reported beside the default because it changes
+     * the answer -- it splits a bucket into one entry per colour count, so a
+     * word whose pieces differ in count arrives as several entries.
+     *
+     * Reported rather than asserted.  The point of the mode is that the number
+     * stops being something the documentation claims and starts being
+     * something the engine prints.
+     */
+    private static void candidatesBenchmark() {
+        System.out.println("=================================================================");
+        System.out.println(" The root: what the first square offers a seed");
+        System.out.println("=================================================================");
+        System.out.println(" configuration          entries   variants   pieces   a seed can");
+
+        SolverConfig plain = new SolverConfig();
+        reportRoot("default", plain);
+
+        SolverConfig quota = new SolverConfig();
+        quota.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        reportRoot("quota=blackwood", quota);
+
+        SolverConfig slipped = new SolverConfig();
+        slipped.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        slipped.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        reportRoot("+ slip=verhaard", slipped);
+
+        System.out.println();
+        System.out.println(" A run of one entry is the degenerate case: the seed has nothing");
+        System.out.println(" to reorder, so every attempt opens with the same placement and");
+        System.out.println(" parallel seeds share the root of the tree.");
+        System.out.println();
+    }
+
+    private static void reportRoot(String label, SolverConfig cfg) {
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+        int entries = s.rootEntryCount();
+        int[] variants = s.rootCandidates();
+
+        boolean[] seen = new boolean[s.cellTotal()];
+        int pieces = 0;
+        for (int i = 0; i < variants.length; i++) {
+            int piece = variants[i] >>> 2;
+            if (piece < seen.length && !seen[piece]) { seen[piece] = true; pieces++; }
+        }
+
+        String verdict = (entries < 2)
+            ? "nothing -- every seed opens the same way"
+            : "reorder " + entries + " entries";
+        System.out.println(" " + pad(label, 22)
+            + " " + pad("" + entries, 9)
+            + " " + pad("" + variants.length, 10)
+            + " " + pad("" + pieces, 8)
+            + " " + verdict);
     }
 
     // ---------------------------------------------------------------- orders

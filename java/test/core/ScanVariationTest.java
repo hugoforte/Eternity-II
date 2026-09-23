@@ -28,6 +28,7 @@ public final class ScanVariationTest {
         itIsExactlyReproducible();
         itSendsDifferentSeedsDownDifferentTrees();
         itNeverChangesWhatExists();
+        itReportsWhatTheRootOffers();
         T.endSection();
 
         T.section("ScanVariationTest: restarts");
@@ -40,6 +41,39 @@ public final class ScanVariationTest {
     }
 
     // -------------------------------------------------------------- off by default
+
+    /**
+     * What the first square offers, which is the one place a seed provably
+     * cannot reach: the seed permutes whole entries and a run of one entry has
+     * nothing to permute.  The engine has to be able to say how many it holds,
+     * because otherwise the claim can only be argued.
+     *
+     * The count is tied back to the search rather than left free-standing --
+     * whatever the accessor reports, the variant the engine actually placed
+     * first has to be one of the ones it offered.
+     */
+    private static void itReportsWhatTheRootOffers() {
+        ScanSolver s = new ScanSolver(Instance.eternity2());
+        s.maxNodes = 2000000L;
+        s.solve();
+
+        int[] root = s.rootCandidates();
+        T.check("the first square offers at least one candidate", root.length > 0,
+                "rootCandidates was empty");
+        T.check("its entries never outnumber the variants they hold",
+                s.rootEntryCount() <= root.length,
+                "entries=" + s.rootEntryCount() + " variants=" + root.length);
+        T.check("a run holding candidates is a run with entries in it",
+                s.rootEntryCount() > 0, "entries=" + s.rootEntryCount());
+
+        boolean offered = false;
+        for (int i = 0; i < root.length; i++) {
+            if (root[i] == s.bestOrderVariants[0]) offered = true;
+        }
+        T.check("the variant the search placed first is one the root offered",
+                offered, "placed " + s.bestOrderVariants[0]
+                       + ", root offered " + root.length + " variants");
+    }
 
     private static void itIgnoresTheSeedUnlessAsked() {
         ScanSolver plain = new ScanSolver(Instance.eternity2());
