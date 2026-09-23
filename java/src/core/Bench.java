@@ -14,7 +14,7 @@ package core;
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
  *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
- *   java -cp out core.Bench record 100000000 20 week  # what the record rule discards
+ *   java -cp out core.Bench record 100000000 20 week 1  # what the record rule discards
  *
  * Several different questions are measured, because they have different
  * answers:
@@ -125,7 +125,8 @@ public final class Bench {
             long budget = (args.length > 1) ? parseLong(args[1], 100000000L) : 100000000L;
             int count = (args.length > 2) ? (int) parseLong(args[2], 20L) : 20;
             String profile = (args.length > 3) ? args[3] : "week";
-            recordBenchmark(budget, count, profile);
+            long firstSeed = (args.length > 4) ? parseLong(args[4], 0L) : 0L;
+            recordBenchmark(budget, count, profile, firstSeed);
         }
         if (which.equals("seeds")) {
             int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
@@ -429,12 +430,14 @@ public final class Bench {
 
     /**
      * The board the engine keeps against the best-scoring node it visited,
-     * one seed per row.  Seed 0 is the plain descent; the rest vary the
-     * candidate order with {@code valueOrder=random}, which is what makes
-     * seeds diverge under the colour quota (see the diversity cap in
-     * docs/SOLVER.md).
+     * one seed per row, {@code count} seeds from {@code firstSeed}.  Seed 0
+     * is the plain descent; any other varies the candidate order with
+     * {@code valueOrder=random}, which is what makes seeds diverge under the
+     * colour quota (see the diversity cap in docs/SOLVER.md).  The seed range
+     * lets several processes split one sweep.
      */
-    private static void recordBenchmark(long budget, int count, String profile) {
+    private static void recordBenchmark(long budget, int count, String profile,
+                                        long firstSeed) {
         SolverConfig base = recordProfile(profile);
         if (base == null) {
             System.out.println("unknown profile '" + profile
@@ -443,16 +446,18 @@ public final class Bench {
         }
         System.out.println("=================================================================");
         System.out.println(" ScanSolver on Eternity II: the deepest board vs the best-scoring node");
-        System.out.println(" profile=" + profile + "  budget=" + budget + "  seeds=" + count);
+        System.out.println(" profile=" + profile + "  budget=" + budget
+                           + "  seeds=" + firstSeed + ".." + (firstSeed + count - 1));
         System.out.println(" " + base.toJson());
         System.out.println("=================================================================");
         System.out.println(" seed    ms      nodes/sec    kept: placed edges breaks   best: placed edges breaks   gap");
 
         int positive = 0, maxGap = 0;
         for (int i = 0; i < count; i++) {
+            long seed = firstSeed + i;
             SolverConfig cfg = base.copy();
-            cfg.randomSeed = i;
-            if (i > 0) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+            cfg.randomSeed = seed;
+            if (seed != 0) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
             ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
             s.maxNodes = budget;
             long t0 = System.nanoTime();
@@ -461,7 +466,7 @@ public final class Bench {
             int gap = s.bestScore - s.bestMatchedEdges;
             if (gap > 0) positive++;
             if (gap > maxGap) maxGap = gap;
-            System.out.println(" " + pad("" + i, 7)
+            System.out.println(" " + pad("" + seed, 7)
                 + " " + pad("" + ms, 7)
                 + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
                 + " " + pad(s.bestPlaced + "/256", 13)
