@@ -18,8 +18,9 @@ java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
 java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
 java -cp java/classes core.ScanSolver 50000000 --quotaSchedule=blackwood
-# the best board this code reaches -- 250/256 pieces, 456/480 edges, ~5 min on one core
-java -cp java/classes core.ScanSolver 8000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
+# the best board this code reaches -- 256/256 pieces, 466/480 edges, ~7 min on one core
+java -cp java/classes core.ScanSolver 10000000000 --slipSchedule=verhaard --quotaSchedule=blackwood \
+  --tailFromDepth=244 --tailBreakBonus=2 --valueOrder=random --randomSeed=516
 java -cp java/classes app.Engine --engine=scan --workers=8   # one ScanSolver per worker, best wins
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
@@ -890,6 +891,35 @@ sweep; it finishes at 464.
 
 Throughput fell to about 13M nodes/sec per process with eleven of twelve cores busy, against 27M
 alone, so the wall-clock figures are for a loaded machine.
+
+### What a seed sweep explores: the 21 winners are 12 boards
+
+`core.Bench breaks <nodes> <profile> <seeds>` prints one row per seed: the perfect prefix, the
+error-free reach, the depth that closed each break, and the opening pieces. Run on the 21 seeds
+above that finished at 15 breaks, it shows that **they are 12 distinct boards**: nine seeds produce
+the identical board, three another, three a third. The winners and 21 seeds that stopped at 253 do
+not differ in perfect prefix (193 to 214 against 193 to 204), error-free reach (206 to 214 against
+205 to 213) or first break, and every board opens with a corner and the same dozen pieces, because
+the colour quota and the banded order pin the first rows almost completely. `valueOrder=random`
+only shuffles within the quota's equal-count groups, so seeds diverge late and shallowly, and a
+thousand short seeded attempts re-walk the same dozen tails.
+
+Ten times the budget does something different. The six seeds that reached 465 at 1e10 but not at
+1e9 were re-run with the same mode, and **all six are new boards**, unlike each other and unlike
+the twelve. A long descent keeps entering new basins inside its own subtree. Counted on distinct
+465 boards, 1e9 per attempt yields 12 from 1e12 nodes and is saturating, while 1e10 per attempt
+yields 7 from 4e11 nodes with no repeat. So fewer, longer attempts are the shape that explores, and
+the earlier "per node it is a draw" holds only for raw hits.
+
+Under the same reasoning the 14-break ceiling (`endgame2`, where every filled board is a 466) was
+run at 1e10 per seed instead of 1e9. **Seed 516 filled the board with fourteen breaks, for 466 /
+480, at the 51st attempt**: the same score the README records from the earlier week-long run,
+where two plain 14-break descents filled after 1.1e12 nodes each, found here in 1e10 nodes on one
+core, about seven minutes. Its breaks close at depths 203, 207, 215, 218, 221, 226, 228, 235, 237,
+240, 243, 245, 252 and 253, its perfect prefix is 203 and its error-free reach 211. The command at
+the top of this document reproduces it. Three 466s from roughly 2.7e12 nodes of 14-break search
+puts a 466 near one per 5e11 nodes, about nine times rarer than a 465, which is gentler than the
+lower bound the short sweep suggested and consistent with short attempts wasting nodes on repeats.
 
 ### Fill orders, measured without running a search
 

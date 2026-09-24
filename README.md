@@ -54,6 +54,7 @@ piece and two edges ahead.
 | | speed | score | pieces | errorFree | breaks | cost |
 |---|---|---|---|---|---|---|
 | **best so far** | 22.0M | **466 / 480** | 256 / 256 | *pending* | 14 | 13.9 h, 1.1e12 nodes |
+| the same score, seeded | 23.5M | **466 / 480** | 256 / 256 | 211 / 256 | 14 | 7 min, 1e10 nodes, `--tailBreakBonus=2 --valueOrder=random --randomSeed=516` |
 | best in a minute | 28.2M | 464 / 480 | 256 / 256 | 207 / 256 | 16 | 35 s, 1e9 nodes |
 | the app's defaults | 25.9M | 454 / 480 | 249 / 256 | 207 / 256 | 12 | 35 s, 1e9 nodes |
 | world record, 2021 | — | 470 / 480 | 256 / 256 | — | 10 | never beaten |
