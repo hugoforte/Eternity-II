@@ -1006,7 +1006,10 @@ class EngineIntegrationTest(unittest.TestCase):
         return events
 
     def test_engine_accepts_every_default_and_reports_an_attempt(self):
-        cfg = schema.coerce_config({"nodeBudget": 250_000})
+        # The default engine is scan, whose banded fill order reaches the hint
+        # square at depth 135; a million nodes gets the default attempt past
+        # 200, where 250k stopped at 134 and never placed it.
+        cfg = schema.coerce_config({"nodeBudget": 1_000_000})
         events = self._run(cfg)
         kinds = {e["type"] for e in events}
         self.assertIn("meta", kinds)
@@ -1020,7 +1023,7 @@ class EngineIntegrationTest(unittest.TestCase):
 
         end = next(e for e in events if e["type"] == "end")
         self.assertTrue(end["valid"], "engine reported an invalid board")
-        self.assertLessEqual(end["nodes"], 250_000)
+        self.assertLessEqual(end["nodes"], 1_000_000)
         self.assertGreater(end["edges"], 0)
         self.assertLessEqual(end["edges"], 480)
         self.assertEqual(end["edges"] == 480, end["solved"],
