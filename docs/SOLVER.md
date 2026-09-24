@@ -857,6 +857,40 @@ record, so nearly every node pays one compare and no subtract. Measured at 1e8 n
 `slipSchedule=verhaard`, four interleaved pairs against a build of `origin/main`, it is within the
 run-to-run noise; the ungated form was about 8% slower.
 
+### Seeds or budget, measured: what a 465 costs and what a 466 would
+
+The record above is 480 less the breaks a filled board carries, so the score is the distribution of
+breaks at completion, and the question for a week of compute is whether to spend it on many short
+seeded attempts or a few long ones. The `endgame` profile (`slipSchedule=verhaard`,
+`quotaSchedule=blackwood` with `14,22,5`, `tailFromDepth=244`, `tailBreakBonus=4`,
+`valueOrder=random`) was run over seeds 1 to 1000 at 1e9 nodes and seeds 1 to 40 at 1e10, with
+`core.Bench record`, six cores at a time.
+
+| budget | seeds | filled | at 16 breaks (464) | at 15 breaks (465) | at 14 (466) | median wall |
+|---|---|---|---|---|---|---|
+| 1e9 | 1000 | 312 | 294 | **18** | 0 | 74 s |
+| 1e10 | 40 | 39 | 32 | **7** | 0 | 13 min |
+
+**Per node it is a draw.** A 465 costs 5.6e10 nodes at 1e9 per attempt and 5.7e10 at 1e10, so
+ten times the budget buys ten times fewer attempts and the same number of 465s. Paired on the same
+forty seeds, 1e10 was better on 32, equal on 8 and worse on none, and filled 39 boards against 10:
+the budget does buy completions, but not fewer breaks once the board is filled. The break count at
+completion is a property of the engine and its schedule at this scale, not of how the compute is
+cut up.
+
+**No 466 in 1.4e12 nodes.** The ratio from 16 breaks to 15 is about 16 to 1 at 1e9 and 4.6 to 1
+at 1e10; if 15 to 14 is no steeper, a 466 is a few hundred 1e10 attempts, which is days on this
+machine. The community fleet's own ladder (`docs/TYING-THE-RECORD.md`) steepens at every rung, so
+that is a floor.
+
+The seeds that finished at 15 breaks, for anyone who wants the boards: at 1e9, seeds 3, 107, 170,
+303, 310, 389, 393, 445, 468, 702, 728, 835, 850, 858, 911, 914, 926 and 950; at 1e10, seeds 3, 6,
+7, 8, 9, 22 and 34. Seed 3 reaches 465 at both budgets. The plain descent (seed 0) is not in the
+sweep; it finishes at 464.
+
+Throughput fell to about 13M nodes/sec per process with eleven of twelve cores busy, against 27M
+alone, so the wall-clock figures are for a loaded machine.
+
 ### Fill orders, measured without running a search
 
 Two different things are worth knowing about a fill order, and they disagree, so `core.Bench order`
