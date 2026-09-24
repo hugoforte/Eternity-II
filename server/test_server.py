@@ -715,6 +715,23 @@ class SolvedClaimTest(unittest.TestCase):
         detail = self._finish(solved=True, status="solved", edges=480, breaks=0)
         self.assertTrue(detail["solved"])
 
+    def test_a_finished_attempt_sends_the_optimal_values_and_their_details(self):
+        # The settings panel keeps two things: the optimal values it snaps
+        # back to, and the support behind each. Until this was fixed the
+        # finished-attempt event carried only the details under the values'
+        # key, so the tab's stars and "optimal: X" labels kept the values from
+        # its last reconnect however many attempts finished in between.
+        q = self.sup.broker.subscribe()
+        self._finish()
+        events = []
+        while not q.empty():
+            events.append(q.get_nowait())
+        finished = [p for (name, p) in events if name == "attempt_finished"]
+        self.assertEqual(len(finished), 1)
+        payload = finished[0]
+        self.assertEqual(payload["optimal"], self.sup.tuner.optimal_config())
+        self.assertEqual(payload["optimalDetails"], self.sup.tuner.optimal_details())
+
     def test_the_engines_worker_count_is_stored_with_the_attempt(self):
         self.assertEqual(self._finish(workers=6)["workers"], 6)
         self.assertIsNone(self._finish()["workers"],

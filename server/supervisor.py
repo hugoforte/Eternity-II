@@ -488,7 +488,8 @@ class Supervisor:
         self.broker.publish("attempt_finished", {
             "attempt": summary,
             "stats": self.db.stats(),
-            "optimal": self.tuner.optimal_details(),
+            "optimal": self.tuner.optimal_config(),
+            "optimalDetails": self.tuner.optimal_details(),
         })
 
         with self._lock:
