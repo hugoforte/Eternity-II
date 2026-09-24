@@ -130,6 +130,12 @@ public final class Bench {
             long firstSeed = (args.length > 4) ? parseLong(args[4], 0L) : 0L;
             recordBenchmark(budget, count, profile, firstSeed);
         }
+        if (which.equals("breaks")) {
+            long budget = (args.length > 1) ? parseLong(args[1], 1000000000L) : 1000000000L;
+            String profile = (args.length > 2) ? args[2] : "endgame3";
+            String seeds = (args.length > 3) ? args[3] : "3";
+            breaksBenchmark(budget, profile, seeds);
+        }
         if (which.equals("seeds")) {
             int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
             long budget = (args.length > 2) ? parseLong(args[2], 20000000L) : 20000000L;
@@ -489,6 +495,64 @@ public final class Bench {
         System.out.println();
         System.out.println(" seeds where the kept board is not the best-scoring one: "
                            + positive + "/" + count + ", largest gap " + maxGap + " edges");
+        System.out.println();
+    }
+
+    /**
+     * What the boards of named seeds look like, for telling the seeds that
+     * finish with few breaks apart from the ones that do not: the perfect
+     * prefix, the error-free reach, the depth that closed each break, and the
+     * opening pieces. One row per seed, on the same profiles as "record".
+     */
+    private static void breaksBenchmark(long budget, String profile, String seedList) {
+        SolverConfig base = recordProfile(profile);
+        if (base == null) {
+            System.out.println("unknown profile '" + profile + "'");
+            return;
+        }
+        Instance inst = Instance.eternity2();
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: where the breaks of a seed's board sit");
+        System.out.println(" profile=" + profile + "  budget=" + budget);
+        System.out.println("=================================================================");
+        System.out.println(" seed    placed   edges breaks prefix errorFree breakDepths                                          opening");
+        for (String token : seedList.split(",")) {
+            if (token.isEmpty()) continue;
+            long seed = parseLong(token, 0L);
+            SolverConfig cfg = base.copy();
+            cfg.randomSeed = seed;
+            if (seed != 0) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+            ScanSolver s = new ScanSolver(inst, cfg);
+            s.maxNodes = budget;
+            s.solve();
+
+            int[] depthOf = new int[inst.cells];
+            for (int c = 0; c < inst.cells; c++) depthOf[c] = -1;
+            int[] cells = s.bestOrderCells();
+            int[] variants = s.bestOrderVariants();
+            for (int d = 0; d < s.bestOrderLength; d++) depthOf[cells[d]] = d;
+            int[] bad = Validator.mismatchedEdges(inst, s.bestBoard);
+            int[] depths = new int[bad.length / 2];
+            for (int k = 0; k < bad.length; k += 2) {
+                depths[k / 2] = Math.max(depthOf[bad[k]], depthOf[bad[k + 1]]);
+            }
+            java.util.Arrays.sort(depths);
+            StringBuilder bd = new StringBuilder();
+            for (int d : depths) { if (bd.length() > 0) bd.append(' '); bd.append(d); }
+            StringBuilder op = new StringBuilder();
+            for (int d = 0; d < 8 && d < s.bestOrderLength; d++) {
+                if (d > 0) op.append(' ');
+                op.append(variants[d] >>> 2);
+            }
+            System.out.println(" " + pad("" + seed, 7)
+                + " " + pad(s.bestPlaced + "/256", 8)
+                + " " + pad("" + s.bestMatchedEdges, 5)
+                + " " + pad("" + s.bestBreaks, 6)
+                + " " + pad("" + s.bestPerfectTiles, 6)
+                + " " + pad("" + s.deepestErrorFree, 9)
+                + " " + pad(bd.toString(), 52)
+                + " " + op);
+        }
         System.out.println();
     }
 
