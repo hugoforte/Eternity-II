@@ -14,7 +14,8 @@ package core;
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
  *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
- *   java -cp out core.Bench record 100000000 20 week 1  # what the record rule discards
+ *   java -cp out core.Bench record 100000000 20 week 1 [--key=value ...]  # the record rule, per seed
+ *   java -cp out core.Bench breaks 1000000000 endgame3 3,107  # where named seeds' breaks sit
  *
  * Several different questions are measured, because they have different
  * answers:
@@ -128,7 +129,9 @@ public final class Bench {
             int count = (args.length > 2) ? (int) parseLong(args[2], 20L) : 20;
             String profile = (args.length > 3) ? args[3] : "week";
             long firstSeed = (args.length > 4) ? parseLong(args[4], 0L) : 0L;
-            recordBenchmark(budget, count, profile, firstSeed);
+            String[] overrides = (args.length > 5)
+                ? java.util.Arrays.copyOfRange(args, 5, args.length) : new String[0];
+            recordBenchmark(budget, count, profile, firstSeed, overrides);
         }
         if (which.equals("breaks")) {
             long budget = (args.length > 1) ? parseLong(args[1], 1000000000L) : 1000000000L;
@@ -445,20 +448,24 @@ public final class Bench {
      * lets several processes split one sweep.
      */
     private static void recordBenchmark(long budget, int count, String profile,
-                                        long firstSeed) {
+                                        long firstSeed, String[] overrides) {
         SolverConfig base = recordProfile(profile);
         if (base == null) {
             System.out.println("unknown profile '" + profile
                                + "': expected lab, week, weekB, endgame or endgameN");
             return;
         }
+        // Any --key=value after the seed is applied on top of the profile,
+        // so a sweep can vary the fill order or the triple without a profile
+        // for every combination.
+        for (String o : overrides) base.applyArg(o);
         System.out.println("=================================================================");
         System.out.println(" ScanSolver on Eternity II: the deepest board vs the best-scoring node");
         System.out.println(" profile=" + profile + "  budget=" + budget
                            + "  seeds=" + firstSeed + ".." + (firstSeed + count - 1));
         System.out.println(" " + base.toJson());
         System.out.println("=================================================================");
-        System.out.println(" seed    ms      nodes/sec    kept: placed edges breaks   best: placed edges breaks   gap");
+        System.out.println(" seed    ms      nodes/sec    kept: placed edges breaks   best: placed edges breaks   gap  prefix breakDepths");
 
         int positive = 0, maxGap = 0;
         for (int i = 0; i < count; i++) {
@@ -483,7 +490,9 @@ public final class Bench {
                 + " " + pad(s.bestScorePlaced + "/256", 13)
                 + " " + pad("" + s.bestScore, 5)
                 + " " + pad("" + s.bestScoreBreaks, 8)
-                + " " + gap);
+                + " " + pad("" + gap, 4)
+                + " " + pad("" + s.bestPerfectTiles, 6)
+                + " " + breakDepths(Instance.eternity2(), s));
             String err = Validator.validatePartial(Instance.eternity2(), s.bestScoreBoard,
                                                    false, s.bestScoreBreaks);
             if (err != null) System.out.println("   INVALID BEST-SCORING BOARD: " + err);
@@ -526,19 +535,7 @@ public final class Bench {
             s.maxNodes = budget;
             s.solve();
 
-            int[] depthOf = new int[inst.cells];
-            for (int c = 0; c < inst.cells; c++) depthOf[c] = -1;
-            int[] cells = s.bestOrderCells();
             int[] variants = s.bestOrderVariants();
-            for (int d = 0; d < s.bestOrderLength; d++) depthOf[cells[d]] = d;
-            int[] bad = Validator.mismatchedEdges(inst, s.bestBoard);
-            int[] depths = new int[bad.length / 2];
-            for (int k = 0; k < bad.length; k += 2) {
-                depths[k / 2] = Math.max(depthOf[bad[k]], depthOf[bad[k + 1]]);
-            }
-            java.util.Arrays.sort(depths);
-            StringBuilder bd = new StringBuilder();
-            for (int d : depths) { if (bd.length() > 0) bd.append(' '); bd.append(d); }
             StringBuilder op = new StringBuilder();
             for (int d = 0; d < 8 && d < s.bestOrderLength; d++) {
                 if (d > 0) op.append(' ');
@@ -550,10 +547,32 @@ public final class Bench {
                 + " " + pad("" + s.bestBreaks, 6)
                 + " " + pad("" + s.bestPerfectTiles, 6)
                 + " " + pad("" + s.deepestErrorFree, 9)
-                + " " + pad(bd.toString(), 52)
+                + " " + pad(breakDepths(inst, s), 52)
                 + " " + op);
         }
         System.out.println();
+    }
+
+    /**
+     * The depths that closed each break of the kept board, ascending and
+     * space-separated. With the perfect prefix this identifies a board well
+     * enough to tell two seeds that found the same one apart from two that
+     * did not, without printing the board.
+     */
+    private static String breakDepths(Instance inst, ScanSolver s) {
+        int[] depthOf = new int[inst.cells];
+        for (int c = 0; c < inst.cells; c++) depthOf[c] = -1;
+        int[] cells = s.bestOrderCells();
+        for (int d = 0; d < s.bestOrderLength; d++) depthOf[cells[d]] = d;
+        int[] bad = Validator.mismatchedEdges(inst, s.bestBoard);
+        int[] depths = new int[bad.length / 2];
+        for (int k = 0; k < bad.length; k += 2) {
+            depths[k / 2] = Math.max(depthOf[bad[k]], depthOf[bad[k + 1]]);
+        }
+        java.util.Arrays.sort(depths);
+        StringBuilder bd = new StringBuilder();
+        for (int d : depths) { if (bd.length() > 0) bd.append(' '); bd.append(d); }
+        return bd.toString();
     }
 
     private static SolverConfig recordProfile(String profile) {
