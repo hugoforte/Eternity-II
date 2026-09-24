@@ -79,7 +79,9 @@ package core;
  *     of zero nearly everywhere means depth-first recording costs nothing.
  *     The profile picks the configuration: "lab" is the lab's defaults, "week"
  *     and "weekB" the long run's two colour triples, "endgame" the same with
- *     the tail allowance that finishes the board.
+ *     the tail allowance that finishes the board, and "endgameN" the same
+ *     with an allowance of N -- "endgame3" caps the board at fifteen breaks,
+ *     so every board it finishes is a 465 by construction.
  */
 public final class Bench {
 
@@ -441,7 +443,7 @@ public final class Bench {
         SolverConfig base = recordProfile(profile);
         if (base == null) {
             System.out.println("unknown profile '" + profile
-                               + "': expected lab, week, weekB or endgame");
+                               + "': expected lab, week, weekB, endgame or endgameN");
             return;
         }
         System.out.println("=================================================================");
@@ -499,10 +501,11 @@ public final class Bench {
         cfg.tailFromDepth = 244;
         if (profile.equals("week")) { cfg.quotaColours = BLACKWOOD_COLOURS; return cfg; }
         if (profile.equals("weekB")) { cfg.quotaColours = "1,7,10"; return cfg; }
-        if (profile.equals("endgame")) {
+        if (profile.startsWith("endgame")) {
             cfg.quotaColours = BLACKWOOD_COLOURS;
-            cfg.tailBreakBonus = 4;
-            return cfg;
+            String bonus = profile.substring("endgame".length());
+            cfg.tailBreakBonus = bonus.isEmpty() ? 4 : (int) parseLong(bonus, -1L);
+            return (cfg.tailBreakBonus >= 0) ? cfg : null;
         }
         return null;
     }
