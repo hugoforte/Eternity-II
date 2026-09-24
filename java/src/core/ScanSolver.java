@@ -1513,6 +1513,8 @@ public final class ScanSolver implements Search {
     /** Bring the search to a halt at its next node; see {@link Search#requestStop}. */
     public void requestStop() { this.maxNodes = 1; }
     public long nodes() { return nodes; }
+    /** The attempt's node budget, from the config; {@code Long.MAX_VALUE} when unbounded. */
+    public long nodeBudget() { return nodeBudget; }
     public int placedCount() { return placed; }
     public int bestPlaced() { return bestPlaced; }
     public int bestMatchedEdges() { return bestMatchedEdges; }

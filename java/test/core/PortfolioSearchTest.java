@@ -3,18 +3,18 @@ package core;
 /**
  * {@link PortfolioSearch} runs several seeded {@link ScanSolver} workers at
  * once and reports whichever does best. What matters here is the aggregation
- * itself -- that the reported board is never worse than running just one of
- * its own workers, that node counts are genuinely summed, and that a solve
- * still validates -- not the search itself, which {@link ScanSolverTest} and
- * {@link CrossValidationTest} already cover.
+ * itself -- that one node budget is split across the workers and their
+ * counts summed back to it, that the reported board is the best of theirs,
+ * and that a solve still validates -- not the search itself, which
+ * {@link ScanSolverTest} and {@link CrossValidationTest} already cover.
  */
 public final class PortfolioSearchTest {
 
     public static void run() {
         T.section("PortfolioSearchTest: several seeded workers, best result wins");
 
-        itNeverDoesWorseThanItsOwnFirstWorker();
-        itSumsNodesAcrossEveryWorker();
+        itReportsTheBestOfItsWorkersAtTheirShareOfTheBudget();
+        itSplitsOneBudgetAcrossEveryWorker();
         itSolvesGeneratedInstances();
         itIsRepeatablePerSeed();
         itBreaksATieByWorkerIndex();
@@ -24,50 +24,63 @@ public final class PortfolioSearchTest {
 
     // ------------------------------------------------------- result quality
 
-    private static void itNeverDoesWorseThanItsOwnFirstWorker() {
-        // Worker 0 of an N-worker portfolio is built from exactly the same
-        // seed as the lone worker of a 1-worker portfolio, so the N-worker
-        // result -- the best across a strict superset of that computation --
-        // can never score lower.
+    private static void itReportsTheBestOfItsWorkersAtTheirShareOfTheBudget() {
+        // Each worker is rebuilt on its own with the seed the portfolio gives
+        // it and a quarter of the budget, which is exactly the search the
+        // portfolio runs for it; the portfolio's board must be the best of
+        // those four, on the same order ScanSolver.recordBest uses.
         Instance inst = Instance.eternity2();
         SolverConfig cfg = new SolverConfig();
         cfg.engine = SolverConfig.ENGINE_SCAN;
-        cfg.nodeBudget = 500000L;
+        cfg.nodeBudget = 400000L;
+        cfg.randomSeed = 99L;
+        int workers = 4;
 
-        PortfolioSearch solo = new PortfolioSearch(inst, cfg, 1);
-        solo.solve();
+        int bestPlaced = 0, bestEdges = 0;
+        for (int i = 0; i < workers; i++) {
+            SolverConfig wc = cfg.copy();
+            wc.randomSeed = PortfolioSearch.mixSeed(cfg.randomSeed, i);
+            wc.nodeBudget = cfg.nodeBudget / workers;
+            ScanSolver alone = new ScanSolver(inst, wc);
+            alone.solve();
+            if (alone.bestPlaced > bestPlaced
+                    || (alone.bestPlaced == bestPlaced && alone.bestMatchedEdges > bestEdges)) {
+                bestPlaced = alone.bestPlaced;
+                bestEdges = alone.bestMatchedEdges;
+            }
+        }
 
-        PortfolioSearch team = new PortfolioSearch(inst, cfg, 4);
+        PortfolioSearch team = new PortfolioSearch(inst, cfg, workers);
         team.solve();
-
-        // The same (placed, edges) lexicographic order ScanSolver.recordBest
-        // uses internally to decide "is this a new best".
-        boolean atLeastAsGood = team.bestPlaced() > solo.bestPlaced()
-            || (team.bestPlaced() == solo.bestPlaced()
-                && team.bestMatchedEdges() >= solo.bestMatchedEdges());
-        T.check("four workers never report a worse board than one",
-                atLeastAsGood,
-                "solo=" + solo.bestPlaced() + "/" + solo.bestMatchedEdges()
-                    + " team=" + team.bestPlaced() + "/" + team.bestMatchedEdges());
+        T.eq("the portfolio's depth is the best of its workers at a quarter budget each",
+             bestPlaced, team.bestPlaced());
+        T.eq("...and so is its score", bestEdges, team.bestMatchedEdges());
     }
 
     // -------------------------------------------------------------- nodes
 
-    private static void itSumsNodesAcrossEveryWorker() {
+    private static void itSplitsOneBudgetAcrossEveryWorker() {
         // A budget far below what it takes to place every piece on the real
         // puzzle guarantees every worker runs to its own cap rather than
-        // solving early, so the total is exactly workers * nodeBudget.
+        // solving early, so the total is exactly the one nodeBudget it was
+        // given -- including when it does not divide by the worker count.
         Instance inst = Instance.eternity2();
         SolverConfig cfg = new SolverConfig();
         cfg.engine = SolverConfig.ENGINE_SCAN;
-        cfg.nodeBudget = 20000L;
+        cfg.nodeBudget = 100003L;
 
         PortfolioSearch team = new PortfolioSearch(inst, cfg, 5);
         team.solve();
 
-        T.eq("total nodes is exactly workers * nodeBudget when nobody solves",
-             5L * 20000L, team.nodes());
+        T.eq("total nodes is exactly the one nodeBudget when nobody solves",
+             100003L, team.nodes());
         T.check("the portfolio reports itself as budget-bound", team.aborted());
+
+        SolverConfig open = cfg.copy();
+        open.nodeBudget = Long.MAX_VALUE;
+        PortfolioSearch unbounded = new PortfolioSearch(inst, open, 3);
+        T.eq("an unbounded budget stays unbounded for every worker",
+             Long.MAX_VALUE, unbounded.workerBudget(2));
     }
 
     // --------------------------------------------------------------- solving
@@ -109,7 +122,7 @@ public final class PortfolioSearchTest {
         Instance inst = Instance.eternity2();
         SolverConfig cfg = new SolverConfig();
         cfg.engine = SolverConfig.ENGINE_SCAN;
-        cfg.nodeBudget = 300000L;
+        cfg.nodeBudget = 900000L;
         cfg.randomSeed = 777L;
         int workers = 3;
 
@@ -118,6 +131,7 @@ public final class PortfolioSearchTest {
         for (int i = 0; i < workers; i++) {
             SolverConfig wc = cfg.copy();
             wc.randomSeed = PortfolioSearch.mixSeed(cfg.randomSeed, i);
+            wc.nodeBudget = cfg.nodeBudget / workers;
             alone[i] = new ScanSolver(inst, wc);
             alone[i].solve();
         }

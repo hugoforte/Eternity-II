@@ -1060,14 +1060,18 @@ one.
   heavy-tailed runtimes, and a slipping descent has no tail, because it always reaches ~245 and is
   never stuck.
 * **Cross-attempt parallelism** — done, for `ScanSolver` only. `app.Engine` runs `engine=scan` as a
-  `core.PortfolioSearch` of one independently-seeded `ScanSolver` per available core (each against the
-  full `nodeBudget`, not a shared fraction of it) and reports whichever finds the best board; `--workers=N`
-  overrides the auto-detected count, and `--workers=1` forces the plain single-descent path. This needed no
-  change to the Python supervisor at all -- one subprocess, now internally multi-threaded, is still one
-  subprocess from its point of view. Measured on the real puzzle at 20M nodes per worker on a 16-core
-  machine: 247/256 pieces, 450/480 edges in ~1s wall-clock, against 241/256 and 440/480 in 22s for a single
-  `ScanSolver` at 1B nodes (docs above) -- the same total node budget, spent across cores instead of one.
-  `MrvSolver` attempts are not parallelised this way; see the first bullet above.
+  `core.PortfolioSearch` of one independently-seeded `ScanSolver` per available core, sharing the one
+  `nodeBudget` as evenly as it divides, and reports whichever finds the best board; `--workers=N`
+  overrides the auto-detected count, and `--workers=1` forces the plain single-descent path. The `end`
+  record carries the worker count, and the database stores it, because a recorded seed reproduces only
+  at the same count. The budget is shared rather than given to each worker in full so that an attempt
+  does the same amount of search on any machine and the lab compares engines at equal nodes; the
+  seeds-or-budget measurement above found no difference per node between one descent and many, so the
+  split costs nothing on the score. Measured on the real puzzle at 20M nodes per worker on a 16-core
+  machine, before the split: 247/256 pieces, 450/480 edges in ~1s wall-clock, against 241/256 and
+  440/480 in 22s for a single `ScanSolver` at 1B nodes (docs above) -- the same total node budget,
+  spent across cores instead of one. `MrvSolver` attempts are not parallelised this way; see the first
+  bullet above.
 * **Reaching inside a `(word, mask)` pair.** The seeded permutation reorders a key's entries, which
   leaves the candidates that share a 64-bit word in their natural relative order — about one key in
   five on Eternity II. The opening move was one of them and no longer is: a seeded engine reads the

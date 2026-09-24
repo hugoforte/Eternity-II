@@ -284,6 +284,41 @@ class DbTest(unittest.TestCase):
         self.assertIsNone(detail["breaks"],
                           "an attempt from before slipping was tracked has no count")
 
+    def test_the_worker_count_survives_a_round_trip(self):
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, workers=12)
+        self.assertEqual(self.db.attempt_detail(aid)["workers"], 12)
+        self.assertEqual(self.db.attempt_summaries()[0]["workers"], 12)
+        self.assertEqual(self.db.finished_attempts_for_learning()[0]["workers"], 12)
+
+    def test_an_attempt_that_did_not_report_workers_records_none(self):
+        # NULL means "unknown": a scan attempt from before the count was
+        # recorded ran on however many cores its machine had, and calling
+        # that 1 would make its seed look reproducible when it is not.
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid)
+        self.assertIsNone(self.db.attempt_detail(aid)["workers"])
+
+    def test_a_database_without_the_workers_column_is_upgraded_in_place(self):
+        path = os.path.join(self.dir, "t.sqlite")
+        aid = self.db.start_attempt(schema.defaults(), user_defined=False,
+                                    source="tuner")
+        self._finish(aid, best_depth=191, workers=4)
+        self.db.close()
+
+        conn = sqlite3.connect(path)
+        conn.execute("ALTER TABLE attempts DROP COLUMN workers")
+        conn.commit()
+        conn.close()
+
+        self.db = Db(path)
+        detail = self.db.attempt_detail(aid)
+        self.assertEqual(detail["bestDepth"], 191)
+        self.assertIsNone(detail["workers"],
+                          "an attempt from before the count was recorded has none")
+
     def test_running_attempts_are_hidden_until_finished(self):
         self.db.start_attempt(schema.defaults(), False, "tuner")
         self.assertEqual(self.db.attempt_count(), 0)
@@ -680,6 +715,11 @@ class SolvedClaimTest(unittest.TestCase):
         detail = self._finish(solved=True, status="solved", edges=480, breaks=0)
         self.assertTrue(detail["solved"])
 
+    def test_the_engines_worker_count_is_stored_with_the_attempt(self):
+        self.assertEqual(self._finish(workers=6)["workers"], 6)
+        self.assertIsNone(self._finish()["workers"],
+                          "an engine that reports no count leaves it unknown")
+
     def test_a_slipped_board_is_refused_even_if_the_engine_claims_it(self):
         err = io.StringIO()
         real, sys.stderr = sys.stderr, err
@@ -989,6 +1029,7 @@ class EngineIntegrationTest(unittest.TestCase):
         self.assertEqual(len(end["board"]), 256)
         # the fixed hint piece must be in place in the recorded order
         self.assertIn([135, 138, 1], end["order"])
+        self.assertEqual(end["workers"], 1)
 
     def test_engine_honours_each_extreme_setting(self):
         # a deliberately extreme configuration on every axis
@@ -1045,9 +1086,15 @@ class EngineIntegrationTest(unittest.TestCase):
 
         end = next(e for e in events if e["type"] == "end")
         self.assertTrue(end["valid"])
-        # Each of the 6 workers runs its own full budget, so this is also a
-        # check that nodes are genuinely summed rather than one worker's count.
-        self.assertEqual(end["nodes"], 6 * cfg["nodeBudget"])
+        # The 6 workers share the one budget, so the summed count is the
+        # budget itself, and the record says how many shared it.
+        self.assertEqual(end["nodes"], cfg["nodeBudget"])
+        self.assertEqual(end["workers"], 6)
+        # Live records count the whole attempt too, so no frame or best can
+        # report more than the budget or fewer than the record before it.
+        counts = [e["nodes"] for e in events if e["type"] in ("frame", "best")]
+        self.assertTrue(all(c <= cfg["nodeBudget"] for c in counts))
+        self.assertEqual(counts, sorted(counts))
 
     def test_config_is_echoed_back_unchanged(self):
         cfg = schema.coerce_config({"nodeBudget": 100_000, "cellOrder": "hybrid",

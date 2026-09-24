@@ -418,6 +418,8 @@ class Supervisor:
         nodes = int(end.get("nodes", 0))
         solved = bool(end.get("solved", False))
         breaks = int(end.get("breaks") or 0)
+        workers = end.get("workers")
+        workers = int(workers) if workers is not None else None
         if solved and breaks > 0:
             # "Solved" means a perfect board and nothing else. Edge slipping
             # finishes boards that carry deliberate mismatches, and recording
@@ -464,6 +466,7 @@ class Supervisor:
             best_depth=best_depth,
             matched_edges=matched_edges,
             breaks=breaks,
+            workers=workers,
             nodes=nodes,
             duration_ms=int(end.get("ms", 0)),
             nodes_per_sec=int(end.get("nps", 0)),
