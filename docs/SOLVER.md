@@ -18,8 +18,9 @@ java -cp java/classes core.ScanSolver         # fixed-scan solver on Eternity II
 java -cp java/classes core.ScanSolver 50000000 --slipSchedule=blackwood
 java -cp java/classes core.ScanSolver 50000000 --shuffleStrength=5 --randomSeed=7
 java -cp java/classes core.ScanSolver 50000000 --quotaSchedule=blackwood
-# the best board this code reaches -- 250/256 pieces, 456/480 edges, ~5 min on one core
-java -cp java/classes core.ScanSolver 8000000000 --slipSchedule=verhaard --quotaSchedule=blackwood
+# the best board this code reaches -- 256/256 pieces, 466/480 edges, ~7 min on one core
+java -cp java/classes core.ScanSolver 10000000000 --slipSchedule=verhaard --quotaSchedule=blackwood \
+  --tailFromDepth=244 --tailBreakBonus=2 --valueOrder=random --randomSeed=516
 java -cp java/classes app.Engine --engine=scan --workers=8   # one ScanSolver per worker, best wins
 java -cp java/classes core.Solver             # the older row-major solver
 java -cp java/classes core.Bench              # benchmarks
@@ -810,6 +811,116 @@ what closing it takes.
 **The default stays at a zero bonus**, so every figure elsewhere in this document still describes the
 engine a reader gets without asking for anything.
 
+### The record rule, measured: the deepest board is the best-scoring one
+
+`ScanSolver` keeps the deepest board and lets matched edges decide only ties at equal depth. With
+slipping on, breaks pile up in the tail, so a shallower board that spent far fewer breaks could in
+principle outscore the deepest one and go unreported. The engine now also keeps the best-scoring
+node it visited (`bestScoreBoard`, scored on the hot path as `checksBefore[depth] - breaks` and held
+against `Validator.matchedEdges` by `EdgeSlippingTest`), and `core.Bench record <nodes> <seeds>
+<profile>` prints the two side by side. Seed 0 is the plain descent; the rest use `valueOrder=random`,
+which is what makes seeds diverge under the colour quota.
+
+Four profiles, twenty seeds each, three budgets: 240 attempts. `lab` is `slipSchedule=verhaard`
+alone; `week` adds `quotaSchedule=blackwood` with `14,22,5` and `tailFromDepth=244`; `weekB` is the
+same with `1,7,10`; `endgame` is `week` with `tailBreakBonus=4`.
+
+| profile | budget | seeds at 240+ | filled | best edges | seeds where the kept board is outscored |
+|---|---|---|---|---|---|
+| `lab` | 1e7 / 1e8 / 1e9 | 10 / 18 / 20 | 0 | 444 / 450 / 452 | **0 / 0 / 0** |
+| `week` | 1e7 / 1e8 / 1e9 | 11 / 20 / 20 | 0 | 452 / 456 / 458 | **0 / 0 / 0** |
+| `weekB` | 1e7 / 1e8 / 1e9 | 0 / 2 / 7 | 0 | 179 / 454 / 456 | **0 / 0 / 0** |
+| `endgame` | 1e7 / 1e8 / 1e9 | 11 / 20 / 20 | 0 / 0 / 6 | 460 / 460 / **465** | **0 / 0 / 0** |
+
+**The gap is zero in every one of the 240 attempts, so depth-first recording costs nothing.** The
+arithmetic says why. The score never falls along a descent: past depth 197 every placement adds two
+checks and at most one break, so each step is worth +1 or +2, and the best-scoring node of any
+subtree is a leaf. For a shallower leaf to win it must sit k cells higher with at least 2k+1 fewer
+breaks. But every kept board in the table sits exactly at its depth's break ceiling, and the ceiling
+rises by one break per several cells while the checks rise by two per cell, so a deeper board at the
+ceiling always outscores a shallower one at the ceiling. A leaf below the ceiling would have to be
+stuck with allowance to spare, and the search never found one that scored higher.
+
+Two things the table shows on the side. `weekB`'s random value order reaches the tail in only seven
+of twenty seeds at a billion nodes, against twenty of twenty for `14,22,5`: the second triple is far
+more sensitive to candidate order under the gate. And `endgame` seed 3 at a billion nodes finished
+the board with **fifteen breaks, for 465 / 480**, one edge past the 464 the tail-allowance section
+records. Reproduce it with:
+
+```sh
+java -cp java/classes core.ScanSolver 1000000000 --slipSchedule=verhaard \
+  --quotaSchedule=blackwood --quotaColours=14,22,5 --tailFromDepth=244 --tailBreakBonus=4 \
+  --valueOrder=random --randomSeed=3
+```
+
+The second record is gated behind the shallowest depth whose checks alone exceed the score on
+record, so nearly every node pays one compare and no subtract. Measured at 1e8 nodes on
+`slipSchedule=verhaard`, four interleaved pairs against a build of `origin/main`, it is within the
+run-to-run noise; the ungated form was about 8% slower.
+
+### Seeds or budget, measured: what a 465 costs and what a 466 would
+
+The record above is 480 less the breaks a filled board carries, so the score is the distribution of
+breaks at completion, and the question for a week of compute is whether to spend it on many short
+seeded attempts or a few long ones. The `endgame` profile (`slipSchedule=verhaard`,
+`quotaSchedule=blackwood` with `14,22,5`, `tailFromDepth=244`, `tailBreakBonus=4`,
+`valueOrder=random`) was run over seeds 1 to 1000 at 1e9 nodes and seeds 1 to 40 at 1e10, with
+`core.Bench record`, six cores at a time.
+
+| budget | seeds | filled | at 16 breaks (464) | at 15 breaks (465) | at 14 (466) | median wall |
+|---|---|---|---|---|---|---|
+| 1e9 | 1000 | 312 | 294 | **18** | 0 | 74 s |
+| 1e10 | 40 | 39 | 32 | **7** | 0 | 13 min |
+
+**Per node it is a draw.** A 465 costs 5.6e10 nodes at 1e9 per attempt and 5.7e10 at 1e10, so
+ten times the budget buys ten times fewer attempts and the same number of 465s. Paired on the same
+forty seeds, 1e10 was better on 32, equal on 8 and worse on none, and filled 39 boards against 10:
+the budget does buy completions, but not fewer breaks once the board is filled. The break count at
+completion is a property of the engine and its schedule at this scale, not of how the compute is
+cut up.
+
+**No 466 in 1.4e12 nodes.** The ratio from 16 breaks to 15 is about 16 to 1 at 1e9 and 4.6 to 1
+at 1e10; if 15 to 14 is no steeper, a 466 is a few hundred 1e10 attempts, which is days on this
+machine. The community fleet's own ladder (`docs/TYING-THE-RECORD.md`) steepens at every rung, so
+that is a floor.
+
+The seeds that finished at 15 breaks, for anyone who wants the boards: at 1e9, seeds 3, 107, 170,
+303, 310, 389, 393, 445, 468, 702, 728, 835, 850, 858, 911, 914, 926 and 950; at 1e10, seeds 3, 6,
+7, 8, 9, 22 and 34. Seed 3 reaches 465 at both budgets. The plain descent (seed 0) is not in the
+sweep; it finishes at 464.
+
+Throughput fell to about 13M nodes/sec per process with eleven of twelve cores busy, against 27M
+alone, so the wall-clock figures are for a loaded machine.
+
+### What a seed sweep explores: the 21 winners are 12 boards
+
+`core.Bench breaks <nodes> <profile> <seeds>` prints one row per seed: the perfect prefix, the
+error-free reach, the depth that closed each break, and the opening pieces. Run on the 21 seeds
+above that finished at 15 breaks, it shows that **they are 12 distinct boards**: nine seeds produce
+the identical board, three another, three a third. The winners and 21 seeds that stopped at 253 do
+not differ in perfect prefix (193 to 214 against 193 to 204), error-free reach (206 to 214 against
+205 to 213) or first break, and every board opens with a corner and the same dozen pieces, because
+the colour quota and the banded order pin the first rows almost completely. `valueOrder=random`
+only shuffles within the quota's equal-count groups, so seeds diverge late and shallowly, and a
+thousand short seeded attempts re-walk the same dozen tails.
+
+Ten times the budget does something different. The six seeds that reached 465 at 1e10 but not at
+1e9 were re-run with the same mode, and **all six are new boards**, unlike each other and unlike
+the twelve. A long descent keeps entering new basins inside its own subtree. Counted on distinct
+465 boards, 1e9 per attempt yields 12 from 1e12 nodes and is saturating, while 1e10 per attempt
+yields 7 from 4e11 nodes with no repeat. So fewer, longer attempts are the shape that explores, and
+the earlier "per node it is a draw" holds only for raw hits.
+
+Under the same reasoning the 14-break ceiling (`endgame2`, where every filled board is a 466) was
+run at 1e10 per seed instead of 1e9. **Seed 516 filled the board with fourteen breaks, for 466 /
+480, at the 51st attempt**: the same score the README records from the earlier week-long run,
+where two plain 14-break descents filled after 1.1e12 nodes each, found here in 1e10 nodes on one
+core, about seven minutes. Its breaks close at depths 203, 207, 215, 218, 221, 226, 228, 235, 237,
+240, 243, 245, 252 and 253, its perfect prefix is 203 and its error-free reach 211. The command at
+the top of this document reproduces it. Three 466s from roughly 2.7e12 nodes of 14-break search
+puts a 466 near one per 5e11 nodes, about nine times rarer than a 465, which is gentler than the
+lower bound the short sweep suggested and consistent with short attempts wasting nodes on repeats.
+
 ### Fill orders, measured without running a search
 
 Two different things are worth knowing about a fill order, and they disagree, so `core.Bench order`
@@ -979,14 +1090,18 @@ one.
   heavy-tailed runtimes, and a slipping descent has no tail, because it always reaches ~245 and is
   never stuck.
 * **Cross-attempt parallelism** — done, for `ScanSolver` only. `app.Engine` runs `engine=scan` as a
-  `core.PortfolioSearch` of one independently-seeded `ScanSolver` per available core (each against the
-  full `nodeBudget`, not a shared fraction of it) and reports whichever finds the best board; `--workers=N`
-  overrides the auto-detected count, and `--workers=1` forces the plain single-descent path. This needed no
-  change to the Python supervisor at all -- one subprocess, now internally multi-threaded, is still one
-  subprocess from its point of view. Measured on the real puzzle at 20M nodes per worker on a 16-core
-  machine: 247/256 pieces, 450/480 edges in ~1s wall-clock, against 241/256 and 440/480 in 22s for a single
-  `ScanSolver` at 1B nodes (docs above) -- the same total node budget, spent across cores instead of one.
-  `MrvSolver` attempts are not parallelised this way; see the first bullet above.
+  `core.PortfolioSearch` of one independently-seeded `ScanSolver` per available core, sharing the one
+  `nodeBudget` as evenly as it divides, and reports whichever finds the best board; `--workers=N`
+  overrides the auto-detected count, and `--workers=1` forces the plain single-descent path. The `end`
+  record carries the worker count, and the database stores it, because a recorded seed reproduces only
+  at the same count. The budget is shared rather than given to each worker in full so that an attempt
+  does the same amount of search on any machine and the lab compares engines at equal nodes; the
+  seeds-or-budget measurement above found no difference per node between one descent and many, so the
+  split costs nothing on the score. Measured on the real puzzle at 20M nodes per worker on a 16-core
+  machine, before the split: 247/256 pieces, 450/480 edges in ~1s wall-clock, against 241/256 and
+  440/480 in 22s for a single `ScanSolver` at 1B nodes (docs above) -- the same total node budget,
+  spent across cores instead of one. `MrvSolver` attempts are not parallelised this way; see the first
+  bullet above.
 * **Reaching inside a `(word, mask)` pair.** The seeded permutation reorders a key's entries, which
   leaves the candidates that share a 64-bit word in their natural relative order — about one key in
   five on Eternity II. The opening move was one of them and no longer is: a seeded engine reads the

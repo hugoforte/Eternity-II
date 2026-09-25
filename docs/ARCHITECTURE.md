@@ -86,7 +86,7 @@ One attempt = one `app.Engine` process. Configuration arrives as
 | `frame` | ~9×/second | `ms`, `nodes`, `nps`, `placed`, `best`, `restarts`, `board` |
 | `best` | whenever the record improves | `ms`, `nodes`, `placed`, `edges`, `breaks`, `board` |
 | `restart` | on each restart | `ms`, `nodes`, `index` |
-| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `edges`, `breaks`, `solved`, `valid`, `status`, `restarts`, `order`, `samples`, `board` |
+| `end` | once, at exit | `ms`, `nodes`, `nps`, `best`, `edges`, `breaks`, `solved`, `valid`, `status`, `restarts`, `workers`, `order`, `samples`, `board` |
 
 `board` is 256 integers, one per cell: `-1` for empty, otherwise
 `(pieceId << 2) | rotation`. The UI unpacks that and rotates the piece's edge
@@ -118,13 +118,18 @@ emits its `end` record on the way out, no attempt's results are ever lost.
 
 With `engine=scan`, the process runs a `core.PortfolioSearch` of one
 independently-seeded `ScanSolver` per available core instead of a single one,
-and reports whichever finds the best board — see `docs/SOLVER.md`. This is
-invisible to the server: `--workers` defaults to
-`Runtime.getRuntime().availableProcessors()`, so the one-process-per-attempt
-model above is unchanged, and every event in the table is emitted exactly the
-same, just possibly describing a different worker's board than the previous
-one. `--workers=1` forces the plain single-descent path; `engine=mrv` attempts
-are never parallelised this way.
+sharing the attempt's `nodeBudget` between them, and reports whichever finds
+the best board — see `docs/SOLVER.md`. The one-process-per-attempt model above
+is unchanged: `--workers` defaults to
+`Runtime.getRuntime().availableProcessors()`, and every event in the table is
+emitted exactly the same, just possibly describing a different worker's board
+than the previous one. `nodes` and `nps` in every event count the whole
+attempt, not the reporting worker, so they never jump at the end. The `end`
+record's `workers` says how many shared the budget, and the database keeps it
+in `attempts.workers`, because a recorded seed reproduces only at the same
+count; it is NULL on attempts recorded before the engine reported it.
+`--workers=1` forces the plain single-descent path; `engine=mrv` attempts are
+never parallelised this way and report `workers` as 1.
 
 ### Sampling, not streaming every step
 

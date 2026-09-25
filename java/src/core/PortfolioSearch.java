@@ -7,10 +7,12 @@ package core;
  * (~150 KB of state, no shared mutable data) that idle cores are otherwise
  * wasted on every attempt.
  *
- * Each worker gets its own full node budget, so this trades cores for depth
- * within the same wall-clock time rather than splitting one budget between
- * them. Only {@link ScanSolver} is supported: {@link MrvSolver} keeps its own
- * restart machinery and is not validated for concurrent instances.
+ * The config's node budget is one budget for the whole attempt, split as
+ * evenly as it divides across the workers, so an attempt does the same amount
+ * of search on any core count and the lab can compare it with a single
+ * descent at equal nodes. An unbounded budget stays unbounded for every
+ * worker. Only {@link ScanSolver} is supported: {@link MrvSolver} keeps its
+ * own restart machinery and is not validated for concurrent instances.
  *
  * ----------------------------------------------------------------- races
  *
@@ -50,11 +52,25 @@ public final class PortfolioSearch implements Search {
         for (int i = 0; i < n; i++) {
             SolverConfig wc = cfg.copy();
             wc.randomSeed = mixSeed(cfg.randomSeed, i);
+            wc.nodeBudget = share(cfg.nodeBudget, n, i);
             ScanSolver w = new ScanSolver(inst, wc);
             w.setListener(new WorkerListener(i));
             workers[i] = w;
         }
     }
+
+    /**
+     * Worker {@code i}'s share of a budget split {@code n} ways: the shares
+     * differ by at most one and sum to the budget exactly, and an unbounded
+     * budget is left unbounded.
+     */
+    static long share(long budget, int n, int i) {
+        if (budget == Long.MAX_VALUE) return budget;
+        return budget / n + ((i < budget % n) ? 1 : 0);
+    }
+
+    /** The node budget worker {@code i} was built with. */
+    long workerBudget(int i) { return workers[i].nodeBudget(); }
 
     /** How many workers a config's node budget and this many cores would use. */
     public static int workerCountFor(int availableCores) {

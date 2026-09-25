@@ -47,14 +47,18 @@ import java.io.PrintWriter;
  *
  * With {@code engine=scan}, the attempt runs as a {@link PortfolioSearch} of
  * {@code --workers} independently-seeded descents (default: one per available
- * core) instead of a single one, and reports whichever finds the best board --
- * see that class for why this is safe and what it costs. {@code --workers=1}
- * forces the plain single-descent {@link ScanSolver}. MRV attempts are never
- * parallelised this way.
+ * core) sharing the one node budget, and reports whichever finds the best
+ * board -- see that class for why this is safe and what it costs.
+ * {@code --workers=1} forces the plain single-descent {@link ScanSolver}. MRV
+ * attempts are never parallelised this way. The "end" record carries the
+ * worker count the attempt actually ran with, since a recorded seed only
+ * reproduces at the same count, and node counts in every record are the
+ * whole attempt's, not the reporting worker's.
  */
 public final class Engine implements SolveListener {
 
     private Search solver;
+    private int workerCount = 1;
     private Instance inst;
     private PrintWriter out;
 
@@ -123,6 +127,7 @@ public final class Engine implements SolveListener {
         if (cfg.engine == SolverConfig.ENGINE_SCAN) {
             int n = (workers > 0) ? workers : Runtime.getRuntime().availableProcessors();
             solver = (n > 1) ? new PortfolioSearch(inst, cfg, n) : new ScanSolver(inst, cfg);
+            workerCount = n;
         } else {
             solver = new MrvSolver(inst, cfg);
         }
@@ -200,7 +205,7 @@ public final class Engine implements SolveListener {
         recordSample(s);
         StringBuilder sb = new StringBuilder(4096);
         sb.append("{\"type\":\"best\",\"ms\":").append(ms());
-        sb.append(",\"nodes\":").append(s.nodes());
+        sb.append(",\"nodes\":").append(solver.nodes());
         sb.append(",\"placed\":").append(s.placedCount());
         sb.append(",\"edges\":").append(s.bestMatchedEdges());
         sb.append(",\"breaks\":").append(s.bestBreaks());
@@ -219,8 +224,8 @@ public final class Engine implements SolveListener {
         long elapsed = ms();
         StringBuilder sb = new StringBuilder(4096);
         sb.append("{\"type\":\"frame\",\"ms\":").append(elapsed);
-        sb.append(",\"nodes\":").append(s.nodes());
-        sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (s.nodes() * 1000L / elapsed));
+        sb.append(",\"nodes\":").append(solver.nodes());
+        sb.append(",\"nps\":").append(elapsed <= 0 ? 0 : (solver.nodes() * 1000L / elapsed));
         sb.append(",\"placed\":").append(s.placedCount());
         sb.append(",\"best\":").append(s.bestPlaced());
         sb.append(",\"restarts\":").append(s.restarts());
@@ -232,7 +237,7 @@ public final class Engine implements SolveListener {
 
     public synchronized void onRestart(Search s, int index) {
         emit("{\"type\":\"restart\",\"ms\":" + ms()
-             + ",\"nodes\":" + s.nodes() + ",\"index\":" + index + "}");
+             + ",\"nodes\":" + solver.nodes() + ",\"index\":" + index + "}");
     }
 
     /**
@@ -292,6 +297,7 @@ public final class Engine implements SolveListener {
         sb.append(",\"solved\":").append(solved);
         sb.append(",\"valid\":").append(valid);
         sb.append(",\"restarts\":").append(solver.restarts());
+        sb.append(",\"workers\":").append(workerCount);
         sb.append(",\"status\":\"").append(status).append('"');
 
         sb.append(",\"order\":[");
@@ -360,7 +366,7 @@ public final class Engine implements SolveListener {
             sampleSkip = sampleStride - 1;
         }
         sMs[sampleCount] = (int) ms();
-        sNodes[sampleCount] = s.nodes();
+        sNodes[sampleCount] = solver.nodes();
         sBest[sampleCount] = s.bestPlaced();
         sampleCount++;
     }

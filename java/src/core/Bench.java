@@ -14,6 +14,8 @@ package core;
  *   java -cp out core.Bench seeds 20 100000000   # 20 seeds at an equal budget
  *   java -cp out core.Bench quota       # the colour quota off vs on, equal nodes
  *   java -cp out core.Bench colours     # the quota's colour triples, equal nodes
+ *   java -cp out core.Bench record 100000000 20 week 1 [--key=value ...]  # the record rule, per seed
+ *   java -cp out core.Bench breaks 1000000000 endgame3 3,107  # where named seeds' breaks sit
  *
  * Several different questions are measured, because they have different
  * answers:
@@ -69,6 +71,18 @@ package core;
  *     so a seeded engine holds the root one entry per variant; the quota gate
  *     still limits a seed to the openings with the highest count, and that
  *     limit depends on the triple, so each triple gets its own row.
+ *
+ * 10. "record": what the record rule throws away.  ScanSolver keeps the
+ *     deepest board and lets edges decide only ties, so a shallower board
+ *     that spent far fewer breaks can outscore it and go unreported.  Each
+ *     row runs one seed and prints the board the engine keeps beside the
+ *     best-scoring node it visited, and the gap between them in edges.  A gap
+ *     of zero nearly everywhere means depth-first recording costs nothing.
+ *     The profile picks the configuration: "lab" is the lab's defaults, "week"
+ *     and "weekB" the long run's two colour triples, "endgame" the same with
+ *     the tail allowance that finishes the board, and "endgameN" the same
+ *     with an allowance of N -- "endgame3" caps the board at fifteen breaks,
+ *     so every board it finishes is a 465 by construction.
  */
 public final class Bench {
 
@@ -109,6 +123,21 @@ public final class Bench {
             int from = (args.length > 2) ? (int) parseLong(args[2], 244L) : 244;
             int maxBonus = (args.length > 3) ? (int) parseLong(args[3], 8L) : 8;
             endgameBenchmark(budget, from, maxBonus);
+        }
+        if (which.equals("record")) {
+            long budget = (args.length > 1) ? parseLong(args[1], 100000000L) : 100000000L;
+            int count = (args.length > 2) ? (int) parseLong(args[2], 20L) : 20;
+            String profile = (args.length > 3) ? args[3] : "week";
+            long firstSeed = (args.length > 4) ? parseLong(args[4], 0L) : 0L;
+            String[] overrides = (args.length > 5)
+                ? java.util.Arrays.copyOfRange(args, 5, args.length) : new String[0];
+            recordBenchmark(budget, count, profile, firstSeed, overrides);
+        }
+        if (which.equals("breaks")) {
+            long budget = (args.length > 1) ? parseLong(args[1], 1000000000L) : 1000000000L;
+            String profile = (args.length > 2) ? args[2] : "endgame3";
+            String seeds = (args.length > 3) ? args[3] : "3";
+            breaksBenchmark(budget, profile, seeds);
         }
         if (which.equals("seeds")) {
             int count = (args.length > 1) ? (int) parseLong(args[1], 20L) : 20;
@@ -406,6 +435,162 @@ public final class Bench {
         System.out.println(" unjoined edges from " + (256 - placed) + " empty cells: "
                            + (480 - s.bestMatchedEdges - (bad.length / 2)));
         System.out.println();
+    }
+
+    // -------------------------------------------------------------- record rule
+
+    /**
+     * The board the engine keeps against the best-scoring node it visited,
+     * one seed per row, {@code count} seeds from {@code firstSeed}.  Seed 0
+     * is the plain descent; any other varies the candidate order with
+     * {@code valueOrder=random}, which is what makes seeds diverge under the
+     * colour quota (see the diversity cap in docs/SOLVER.md).  The seed range
+     * lets several processes split one sweep.
+     */
+    private static void recordBenchmark(long budget, int count, String profile,
+                                        long firstSeed, String[] overrides) {
+        SolverConfig base = recordProfile(profile);
+        if (base == null) {
+            System.out.println("unknown profile '" + profile
+                               + "': expected lab, week, weekB, endgame or endgameN");
+            return;
+        }
+        // Any --key=value after the seed is applied on top of the profile,
+        // so a sweep can vary the fill order or the triple without a profile
+        // for every combination.
+        for (String o : overrides) base.applyArg(o);
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: the deepest board vs the best-scoring node");
+        System.out.println(" profile=" + profile + "  budget=" + budget
+                           + "  seeds=" + firstSeed + ".." + (firstSeed + count - 1));
+        System.out.println(" " + base.toJson());
+        System.out.println("=================================================================");
+        System.out.println(" seed    ms      nodes/sec    kept: placed edges breaks   best: placed edges breaks   gap  prefix breakDepths");
+
+        int positive = 0, maxGap = 0;
+        for (int i = 0; i < count; i++) {
+            long seed = firstSeed + i;
+            SolverConfig cfg = base.copy();
+            cfg.randomSeed = seed;
+            if (seed != 0) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+            ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+            s.maxNodes = budget;
+            long t0 = System.nanoTime();
+            s.solve();
+            long ms = (System.nanoTime() - t0) / 1000000L;
+            int gap = s.bestScore - s.bestMatchedEdges;
+            if (gap > 0) positive++;
+            if (gap > maxGap) maxGap = gap;
+            System.out.println(" " + pad("" + seed, 7)
+                + " " + pad("" + ms, 7)
+                + " " + pad("" + (ms == 0 ? 0 : s.nodes * 1000L / ms), 12)
+                + " " + pad(s.bestPlaced + "/256", 13)
+                + " " + pad("" + s.bestMatchedEdges, 5)
+                + " " + pad("" + s.bestBreaks, 8)
+                + " " + pad(s.bestScorePlaced + "/256", 13)
+                + " " + pad("" + s.bestScore, 5)
+                + " " + pad("" + s.bestScoreBreaks, 8)
+                + " " + pad("" + gap, 4)
+                + " " + pad("" + s.bestPerfectTiles, 6)
+                + " " + breakDepths(Instance.eternity2(), s));
+            String err = Validator.validatePartial(Instance.eternity2(), s.bestScoreBoard,
+                                                   false, s.bestScoreBreaks);
+            if (err != null) System.out.println("   INVALID BEST-SCORING BOARD: " + err);
+            if (Validator.matchedEdges(Instance.eternity2(), s.bestScoreBoard) != s.bestScore) {
+                System.out.println("   SCORE MISMATCH: validator counts "
+                    + Validator.matchedEdges(Instance.eternity2(), s.bestScoreBoard));
+            }
+        }
+        System.out.println();
+        System.out.println(" seeds where the kept board is not the best-scoring one: "
+                           + positive + "/" + count + ", largest gap " + maxGap + " edges");
+        System.out.println();
+    }
+
+    /**
+     * What the boards of named seeds look like, for telling the seeds that
+     * finish with few breaks apart from the ones that do not: the perfect
+     * prefix, the error-free reach, the depth that closed each break, and the
+     * opening pieces. One row per seed, on the same profiles as "record".
+     */
+    private static void breaksBenchmark(long budget, String profile, String seedList) {
+        SolverConfig base = recordProfile(profile);
+        if (base == null) {
+            System.out.println("unknown profile '" + profile + "'");
+            return;
+        }
+        Instance inst = Instance.eternity2();
+        System.out.println("=================================================================");
+        System.out.println(" ScanSolver on Eternity II: where the breaks of a seed's board sit");
+        System.out.println(" profile=" + profile + "  budget=" + budget);
+        System.out.println("=================================================================");
+        System.out.println(" seed    placed   edges breaks prefix errorFree breakDepths                                          opening");
+        for (String token : seedList.split(",")) {
+            if (token.isEmpty()) continue;
+            long seed = parseLong(token, 0L);
+            SolverConfig cfg = base.copy();
+            cfg.randomSeed = seed;
+            if (seed != 0) cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+            ScanSolver s = new ScanSolver(inst, cfg);
+            s.maxNodes = budget;
+            s.solve();
+
+            int[] variants = s.bestOrderVariants();
+            StringBuilder op = new StringBuilder();
+            for (int d = 0; d < 8 && d < s.bestOrderLength; d++) {
+                if (d > 0) op.append(' ');
+                op.append(variants[d] >>> 2);
+            }
+            System.out.println(" " + pad("" + seed, 7)
+                + " " + pad(s.bestPlaced + "/256", 8)
+                + " " + pad("" + s.bestMatchedEdges, 5)
+                + " " + pad("" + s.bestBreaks, 6)
+                + " " + pad("" + s.bestPerfectTiles, 6)
+                + " " + pad("" + s.deepestErrorFree, 9)
+                + " " + pad(breakDepths(inst, s), 52)
+                + " " + op);
+        }
+        System.out.println();
+    }
+
+    /**
+     * The depths that closed each break of the kept board, ascending and
+     * space-separated. With the perfect prefix this identifies a board well
+     * enough to tell two seeds that found the same one apart from two that
+     * did not, without printing the board.
+     */
+    private static String breakDepths(Instance inst, ScanSolver s) {
+        int[] depthOf = new int[inst.cells];
+        for (int c = 0; c < inst.cells; c++) depthOf[c] = -1;
+        int[] cells = s.bestOrderCells();
+        for (int d = 0; d < s.bestOrderLength; d++) depthOf[cells[d]] = d;
+        int[] bad = Validator.mismatchedEdges(inst, s.bestBoard);
+        int[] depths = new int[bad.length / 2];
+        for (int k = 0; k < bad.length; k += 2) {
+            depths[k / 2] = Math.max(depthOf[bad[k]], depthOf[bad[k + 1]]);
+        }
+        java.util.Arrays.sort(depths);
+        StringBuilder bd = new StringBuilder();
+        for (int d : depths) { if (bd.length() > 0) bd.append(' '); bd.append(d); }
+        return bd.toString();
+    }
+
+    private static SolverConfig recordProfile(String profile) {
+        SolverConfig cfg = new SolverConfig();
+        cfg.engine = SolverConfig.ENGINE_SCAN;
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        if (profile.equals("lab")) return cfg;
+        cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        cfg.tailFromDepth = 244;
+        if (profile.equals("week")) { cfg.quotaColours = BLACKWOOD_COLOURS; return cfg; }
+        if (profile.equals("weekB")) { cfg.quotaColours = "1,7,10"; return cfg; }
+        if (profile.startsWith("endgame")) {
+            cfg.quotaColours = BLACKWOOD_COLOURS;
+            String bonus = profile.substring("endgame".length());
+            cfg.tailBreakBonus = bonus.isEmpty() ? 4 : (int) parseLong(bonus, -1L);
+            return (cfg.tailBreakBonus >= 0) ? cfg : null;
+        }
+        return null;
     }
 
     // ------------------------------------------------------------ colour quota

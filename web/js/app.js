@@ -361,8 +361,8 @@ function onAttemptFinished(data) {
     history.prepend(data.attempt);
     if (data.attempt.solved) celebrate();
   }
-  if (data.optimal) {
-    settings.setOptimal(undefined, data.optimal);
+  if (data.optimal || data.optimalDetails) {
+    settings.setOptimal(data.optimal, data.optimalDetails);
   }
   refreshLessons();
 }

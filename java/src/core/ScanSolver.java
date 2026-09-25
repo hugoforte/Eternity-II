@@ -389,6 +389,23 @@ public final class ScanSolver implements Search {
     /** Variants of the deepest board, parallel to {@link #bestOrderCells}. */
     public int[] bestOrderVariants;
     public int bestOrderLength;
+    /**
+     * The best-scoring node the search visited, which is not always the
+     * deepest: {@link #bestBoard} is the deepest board and its edges only
+     * break ties at equal depth, so a shallower board that spent far fewer
+     * breaks can outscore it and go unrecorded there.  This one is scored on
+     * the hot path as {@code checksBefore[depth] - breaks}, which the tests
+     * hold against {@link Validator#matchedEdges} on the board itself.
+     */
+    public int[] bestScoreBoard;
+    /** Matched edges of {@link #bestScoreBoard}. */
+    public int bestScore;
+    /** Pieces on {@link #bestScoreBoard}. */
+    public int bestScorePlaced;
+    /** Breaks {@link #bestScoreBoard} carries. */
+    public int bestScoreBreaks;
+    /** The shallowest depth whose checks alone exceed {@link #bestScore}. */
+    private int scoreWatchDepth;
 
     // ------------------------------------------------------------------ build
 
@@ -1010,6 +1027,11 @@ public final class ScanSolver implements Search {
         bestBreaks = 0;
         bestPerfectTiles = 0;
         deepestErrorFree = 0;
+        bestScore = 0;
+        bestScorePlaced = 0;
+        bestScoreBreaks = 0;
+        bestScoreBoard = null;
+        scoreWatchDepth = 0;
         aborted = false;
         restarts = 0;
         bestBoard = null;
@@ -1273,6 +1295,12 @@ public final class ScanSolver implements Search {
             if (listener != null) listener.onNewBest(this);
             reportBest(breaks);
         }
+        // A node can only beat the score record from the depth where the
+        // checks alone exceed it, so nearly every node fails the first compare
+        // and never pays for the subtract.
+        if (depth >= scoreWatchDepth && checksBefore[depth] - breaks > bestScore) {
+            recordBestScore(depth, breaks);
+        }
 
         int topScaled = sideBScaled[chosen[northSlot[depth]]];
         int left = sideR[chosen[westSlot[depth]]];
@@ -1379,6 +1407,7 @@ public final class ScanSolver implements Search {
      */
     private boolean complete(int breaks) {
         placed = cells;
+        if (checksBefore[cells] - breaks > bestScore) recordBestScore(cells, breaks);
         if (breaks > 0) {
             if (cells > bestPlaced
                     || checksBefore[cells] - breaks > bestMatchedEdges) {
@@ -1420,6 +1449,19 @@ public final class ScanSolver implements Search {
         bestMatchedEdges = Validator.matchedEdges(inst, bestBoard);
         bestPerfectTiles = Validator.perfectTiles(inst, bestOrderCells,
                                                   bestOrderVariants, depth);
+    }
+
+    /** Snapshot the board as it stands as the best-scoring one seen. */
+    private void recordBestScore(int depth, int breaks) {
+        if (bestScoreBoard == null) bestScoreBoard = new int[cells];
+        for (int cell = 0; cell < cells; cell++) bestScoreBoard[cell] = -1;
+        for (int d = 0; d < depth; d++) bestScoreBoard[order[d]] = chosen[d];
+        bestScore = checksBefore[depth] - breaks;
+        bestScorePlaced = depth;
+        bestScoreBreaks = breaks;
+        int d = 0;
+        while (d < cells && checksBefore[d] <= bestScore) d++;
+        scoreWatchDepth = d;
     }
 
     /**
@@ -1471,6 +1513,8 @@ public final class ScanSolver implements Search {
     /** Bring the search to a halt at its next node; see {@link Search#requestStop}. */
     public void requestStop() { this.maxNodes = 1; }
     public long nodes() { return nodes; }
+    /** The attempt's node budget, from the config; {@code Long.MAX_VALUE} when unbounded. */
+    public long nodeBudget() { return nodeBudget; }
     public int placedCount() { return placed; }
     public int bestPlaced() { return bestPlaced; }
     public int bestMatchedEdges() { return bestMatchedEdges; }

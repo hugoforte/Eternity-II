@@ -41,8 +41,52 @@ public final class EdgeSlippingTest {
         itIsRepeatable();
         itReportsTheDeepestErrorFreePrefix();
         itLetsTheTailSpendMore();
+        itKeepsTheBestScoringBoardToo();
 
         T.endSection();
+    }
+
+    // --------------------------------------------------- best-scoring board
+
+    /**
+     * The record board is the deepest one, and edges only break ties at equal
+     * depth.  A shallower board that spent far fewer breaks can outscore it,
+     * so the search keeps a second record: the best-scoring node it visited.
+     * Its score is computed on the hot path from the fill order and the break
+     * count, so the Validator has to agree with it on the board itself.
+     */
+    private static void itKeepsTheBestScoringBoardToo() {
+        Instance inst = Instance.eternity2();
+        SolverConfig exact = new SolverConfig();
+        ScanSolver clean = new ScanSolver(inst, exact);
+        clean.maxNodes = 500000L;
+        clean.solve();
+        T.eq("with no breaks the deepest board is also the best-scoring one",
+             clean.bestMatchedEdges, clean.bestScore);
+        T.eq("and it is the same depth", clean.bestPlaced, clean.bestScorePlaced);
+
+        SolverConfig cfg = new SolverConfig();
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        ScanSolver s = new ScanSolver(inst, cfg);
+        s.maxNodes = 20000000L;
+        s.solve();
+
+        T.check("the best-scoring board scores at least what the deepest one does",
+                s.bestScore >= s.bestMatchedEdges,
+                "score=" + s.bestScore + " deepest=" + s.bestMatchedEdges);
+        T.eq("its score is the Validator's count of its own matched edges",
+             Validator.matchedEdges(inst, s.bestScoreBoard), s.bestScore);
+        T.eq("its breaks are exactly the edges the Validator finds mismatched",
+             s.bestScoreBreaks,
+             Validator.mismatchedEdges(inst, s.bestScoreBoard).length / 2);
+        int placed = 0;
+        for (int cell = 0; cell < inst.cells; cell++) {
+            if (s.bestScoreBoard[cell] >= 0) placed++;
+        }
+        T.eq("and its depth is the number of pieces on it", placed, s.bestScorePlaced);
+        T.isNull("and it is legal for the breaks it spent",
+                 Validator.validatePartial(inst, s.bestScoreBoard, false,
+                                           s.bestScoreBreaks));
     }
 
     // ------------------------------------------------------- tail allowance

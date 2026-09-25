@@ -16,7 +16,7 @@ import sqlite3
 import threading
 import time
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _DDL = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS attempts (
     -- attempts that never slip and NULL on attempts recorded before this was
     -- tracked, same convention as matched_edges
     breaks        INTEGER,
+    -- how many seeded workers shared the attempt's node budget; a recorded
+    -- seed only reproduces at the same count. NULL on attempts recorded
+    -- before the engine reported it
+    workers       INTEGER,
     nodes         INTEGER NOT NULL DEFAULT 0,
     duration_ms   INTEGER NOT NULL DEFAULT 0,
     nodes_per_sec INTEGER NOT NULL DEFAULT 0,
@@ -190,6 +194,8 @@ class Db:
             self._conn.execute("ALTER TABLE attempts ADD COLUMN matched_edges INTEGER")
         if "breaks" not in present:
             self._conn.execute("ALTER TABLE attempts ADD COLUMN breaks INTEGER")
+        if "workers" not in present:
+            self._conn.execute("ALTER TABLE attempts ADD COLUMN workers INTEGER")
 
     def close(self):
         with self._lock:
@@ -224,7 +230,8 @@ class Db:
 
     def finish_attempt(self, attempt_id, *, status, solved, valid, best_depth,
                        matched_edges, nodes, duration_ms, nodes_per_sec,
-                       restarts, score, order, samples, breaks=None):
+                       restarts, score, order, samples, breaks=None,
+                       workers=None):
         """Store the results of a finished attempt.
 
         ``matched_edges`` is the score of the best board, or None when the
@@ -232,16 +239,19 @@ class Db:
         ``breaks`` is how many of that board's edges were deliberately
         mismatched (edge slipping); None on attempts recorded before this was
         tracked, 0 on every attempt that never slips.
+        ``workers`` is how many seeded workers shared the node budget; None
+        when the engine did not say, which means the seed cannot be assumed
+        to reproduce.
         """
         now = time.time()
         with self._lock:
             self._conn.execute(
                 "UPDATE attempts SET finished_at=?, status=?, solved=?, valid=?, "
-                "best_depth=?, matched_edges=?, breaks=?, nodes=?, duration_ms=?, "
-                "nodes_per_sec=?, restarts=?, score=? WHERE id=?",
+                "best_depth=?, matched_edges=?, breaks=?, workers=?, nodes=?, "
+                "duration_ms=?, nodes_per_sec=?, restarts=?, score=? WHERE id=?",
                 (now, status, 1 if solved else 0, 1 if valid else 0, best_depth,
-                 matched_edges, breaks, nodes, duration_ms, nodes_per_sec, restarts,
-                 score, attempt_id))
+                 matched_edges, breaks, workers, nodes, duration_ms, nodes_per_sec,
+                 restarts, score, attempt_id))
             if order:
                 self._conn.executemany(
                     "INSERT OR REPLACE INTO placements(attempt_id,seq,cell,piece,rot) "
@@ -282,7 +292,7 @@ class Db:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT id,started_at,finished_at,status,solved,valid,best_depth,"
-                "matched_edges,breaks,nodes,duration_ms,nodes_per_sec,restarts,"
+                "matched_edges,breaks,workers,nodes,duration_ms,nodes_per_sec,restarts,"
                 "user_defined,source,score,config_json "
                 "FROM attempts WHERE status != 'running' "
                 "ORDER BY id DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
@@ -327,6 +337,7 @@ class Db:
             "bestDepth": r["best_depth"],
             "matchedEdges": r["matched_edges"],
             "breaks": r["breaks"],
+            "workers": r["workers"],
             "nodes": r["nodes"],
             "durationMs": r["duration_ms"],
             "nodesPerSec": r["nodes_per_sec"],
@@ -345,8 +356,8 @@ class Db:
         """
         with self._lock:
             rows = self._conn.execute(
-                "SELECT id,best_depth,matched_edges,breaks,nodes,duration_ms,score,"
-                "config_json,solved,user_defined,restarts,status "
+                "SELECT id,best_depth,matched_edges,breaks,workers,nodes,duration_ms,"
+                "score,config_json,solved,user_defined,restarts,status "
                 "FROM attempts "
                 # 'aborted' runs were cut short by the user, so they say nothing
                 # about how good their settings were. Only self-terminating runs
@@ -364,6 +375,7 @@ class Db:
                 "bestDepth": r["best_depth"],
                 "matchedEdges": r["matched_edges"],
                 "breaks": r["breaks"],
+                "workers": r["workers"],
                 "nodes": r["nodes"],
                 "durationMs": r["duration_ms"],
                 "score": r["score"],
