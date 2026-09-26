@@ -38,6 +38,7 @@ public final class ColourQuotaTest {
         itHonoursTheFloorOnTheBoardItReturns();
         itOnlyEverRemovesSolutions();
         itIsRepeatable();
+        itSearchesExactlyAsMainDoes();
         itRefusesColoursTheInstanceCannotCount();
 
         T.endSection();
@@ -336,6 +337,38 @@ public final class ColourQuotaTest {
     }
 
     // ------------------------------------------------------------ repeatable
+
+    /**
+     * The gated, slipping search that found the 466 board -- the endgame2
+     * profile -- pinned to what main's engine finds from one seed at a small
+     * budget.  The run passes through the gate's cutoffs, past the depth where
+     * the floor stops rising, and deep into the slipped runs and the tail
+     * allowance, so a change that makes any of those faster but not exactly
+     * the same search fails here.  The constants were captured from main's
+     * engine; changing one means every measurement made before stops
+     * reproducing, so it takes a reason.
+     */
+    private static void itSearchesExactlyAsMainDoes() {
+        SolverConfig cfg = new SolverConfig();
+        cfg.slipSchedule = SolverConfig.SLIP_VERHAARD;
+        cfg.quotaSchedule = SolverConfig.QUOTA_BLACKWOOD;
+        cfg.quotaColours = "14,22,5";
+        cfg.tailFromDepth = 244;
+        cfg.tailBreakBonus = 2;
+        cfg.valueOrder = SolverConfig.VALUE_RANDOM;
+        cfg.randomSeed = 11L;
+
+        ScanSolver s = new ScanSolver(Instance.eternity2(), cfg);
+        s.maxNodes = 5000000L;
+        s.solve();
+
+        T.eq("the pinned run fills 250 squares", 250, s.bestPlaced);
+        T.eq("carrying 14 breaks", 14, s.bestBreaks);
+        T.eq("its error-free reach is 201", 201, s.deepestErrorFree);
+        T.eq("its best score is 454", 454, s.bestScore);
+        T.eq("and it places exactly the board main's engine places",
+             0x35b4899bL, java.util.Arrays.hashCode(s.bestBoard) & 0xffffffffL);
+    }
 
     private static void itIsRepeatable() {
         SolverConfig cfg = new SolverConfig();
