@@ -311,6 +311,15 @@ public final class ScanSolver implements Search {
     private final int[] quotaColour;
     /** Whether the configured schedule gates this board at all. */
     private final boolean quota;
+    /**
+     * The depth from which the gate can no longer cut anything: the first at
+     * which the floor has reached its final value; 0 when the gate is off.
+     * Past it the count a board carries already meets every floor still to
+     * come, and the count only ever grows, so {@link #descend} reads the
+     * index without the gate's bookkeeping -- the same entries in the same
+     * order, only faster.
+     */
+    private final int quotaUntil;
     /** Depth -> internal edges joined up by the first {@code depth} placements. */
     private final int[] checksBefore;
     /** Whether the configured schedule lets this board slip at all. */
@@ -534,6 +543,11 @@ public final class ScanSolver implements Search {
         // out exactly as it was before.
         this.quotaFloor = quotaFloors(cfg.quotaSchedule, cells);
         this.quota = quotaFloor[cells] > 0;
+        int flat = 0;
+        if (quota) {
+            while (quotaFloor[flat] < quotaFloor[cells]) flat++;
+        }
+        this.quotaUntil = flat;
         this.quotaColour = quota ? checkedQuotaColours(cfg.quotaColours) : new int[0];
         long[][] groups;
         int[] groupCount;
@@ -1343,7 +1357,7 @@ public final class ScanSolver implements Search {
      * @return true when the caller should stop descending.
      */
     private boolean descend(int depth, int breaks, int from, int to) {
-        if (quota) return descendQuota(depth, breaks, from, to);
+        if (depth < quotaUntil) return descendQuota(depth, breaks, from, to);
         for (int i = from; i < to; i++) {
             int w = keyWord[i];
             long live = avail[w];
