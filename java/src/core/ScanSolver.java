@@ -1333,17 +1333,12 @@ public final class ScanSolver implements Search {
         // never looks at a slipped one.
         if (descend(depth, breaks, keyStart[key], keyPerfectEnd[key])) return true;
         if (breaks >= breakCeiling[depth]) return false;
-        // A side facing off the board requires GREY, and a break may not
-        // involve a border colour, so those two keys offer nothing to slip.
-        if (left != GREY
-                && descend(depth, breaks + 1, keyPerfectEnd[key], keyLeftBreakEnd[key])) {
-            return true;
-        }
-        if (topScaled != 0
-                && descend(depth, breaks + 1, keyLeftBreakEnd[key], keyStart[key + 1])) {
-            return true;
-        }
-        return false;
+        // The left-broken and top-broken runs lie back to back and both cost
+        // one break, so they are read as one.  A side facing off the board
+        // requires GREY and a break may not involve a border colour, so the
+        // index holds nothing to slip against a GREY side and needs no test
+        // for it here.
+        return descend(depth, breaks + 1, keyPerfectEnd[key], keyStart[key + 1]);
     }
 
     /**
