@@ -1338,7 +1338,9 @@ public final class ScanSolver implements Search {
         // requires GREY and a break may not involve a border colour, so the
         // index holds nothing to slip against a GREY side and needs no test
         // for it here.
-        return descend(depth, breaks + 1, keyPerfectEnd[key], keyStart[key + 1]);
+        int from = keyPerfectEnd[key], to = keyStart[key + 1];
+        return (depth < quotaUntil) ? descendQuota(depth, breaks + 1, from, to)
+                                    : descendSparse(depth, breaks + 1, from, to);
     }
 
     /**
@@ -1375,6 +1377,45 @@ public final class ScanSolver implements Search {
                 boolean stop = dfs(depth + 1, breaks);
                 avail[w] = live;
                 if (stop) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The same scan as {@link #descend} without the gate, for a long run that
+     * is mostly empty -- the slipped runs, deep in the board, where most
+     * pieces are down.  Testing each entry with a branch mispredicts on the
+     * few that are live; this first marks the live entries, a bit each,
+     * without a branch, then visits only those.  Marking every entry up front
+     * is sound because a child restores {@link #avail} exactly before it
+     * returns, so an entry reads the same before its turn as during it.
+     *
+     * @return true when the caller should stop descending.
+     */
+    private boolean descendSparse(int depth, int breaks, int from, int to) {
+        for (int base = from; base < to; base += 64) {
+            int end = Math.min(to, base + 64);
+            long hits = 0L;
+            for (int i = base; i < end; i++) {
+                long bits = keyMask[i] & avail[keyWord[i]];
+                hits |= ((bits | -bits) >>> 63) << (i - base);
+            }
+            while (hits != 0L) {
+                int i = base + Long.numberOfTrailingZeros(hits);
+                hits &= hits - 1L;
+                int w = keyWord[i];
+                long live = avail[w];
+                long bits = keyMask[i] & live;
+                while (bits != 0L) {
+                    int v = (w << 6) + Long.numberOfTrailingZeros(bits);
+                    bits &= bits - 1L;
+                    chosen[depth] = v;
+                    avail[w] = live & ~(0xFL << (v & 0x3C));
+                    boolean stop = dfs(depth + 1, breaks);
+                    avail[w] = live;
+                    if (stop) return true;
+                }
             }
         }
         return false;
