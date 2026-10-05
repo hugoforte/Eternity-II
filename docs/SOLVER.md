@@ -10,7 +10,7 @@ The solver is a plain Java program; the web app is only a front end for it.
 
 ```sh
 sh build.sh                                   # compile into java/classes
-sh test.sh                                    # 1368 checks, a few seconds
+sh test.sh                                    # 1452 checks, a few seconds
 
 java -cp java/classes core.MrvSolver          # MRV solver on Eternity II
 java -cp java/classes core.MrvSolver 50000000 # stop after 50M steps
@@ -921,6 +921,104 @@ the top of this document reproduces it. Three 466s from roughly 2.7e12 nodes of 
 puts a 466 near one per 5e11 nodes, about nine times rarer than a 465, which is gentler than the
 lower bound the short sweep suggested and consistent with short attempts wasting nodes on repeats.
 
+### Throughput per core, measured: the same search, faster
+
+The score is a rate per node, so nodes per second multiply everything above. This round made
+`ScanSolver` faster on the endgame2 profile (`slipSchedule=verhaard`, `quotaSchedule=blackwood`
+with `14,22,5`, `tailFromDepth=244`, `tailBreakBonus=2`, `valueOrder=random`, seed 516) and on
+plain `slipSchedule=verhaard`, **without changing the search at all**.
+
+**How "the same search" was held.** A harness outside the repository ran 24 configurations against
+a build of `origin/main` and the candidate and compared everything observable: the node count, the
+whole verbose progress log with timings stripped (so the node at which every record and every rise
+in error-free reach happened), the best board and its breaks, perfect tiles and error-free reach,
+the best-scoring board, and the order the best board was built in. The cases were plain
+`verhaard` (unseeded, two `valueOrder=random` seeds, one `shuffleStrength` seed), endgame2 (seeds
+516, 3 and 7, and unseeded), `tailBreakBonus=4`, `quotaColours=1,7,10` (unseeded and two seeds), the
+quota without slipping, `fillOrder=rowMajor` (plain, seeded, and with the quota and Blackwood's
+schedule), no slipping at all (unseeded, a seed alone, `reverse`, `random`), Blackwood's schedule,
+`restartPolicy=luby`, `restartPolicy=fixed` under endgame2, and `greyInteriorPruning=false`, at 1e7
+to 1e8 nodes each. Every kept change was identical in full. Seed 516 at 1e10 nodes was also run on
+both builds and its whole progress log compared: identical, filling the board for 466 / 480 with
+fourteen breaks at node 9,059,766,118 on both, in 296 s of wall-clock against 409 s.
+`ColourQuotaTest` now pins one endgame2 seed at 5e6 nodes to what `origin/main` finds, so the suite
+catches a change that is faster but not the same search.
+
+**How speed was measured.** The machine was shared, so single runs are noise. Every figure below is
+the median of interleaved pairs, one process at a time: the baseline, then the candidate, the order
+alternating each pair, at 2e8 nodes for endgame2 and 3e8 for plain. The rate is nodes per second of
+thread CPU time, which removes time-slicing and measured noticeably tighter than wall-clock, though
+a hyperthread sibling can still slow either run. Each ratio is against the commit before it, and
+the spread is the smallest and largest pair.
+
+**Where the time went.** JFR sampling was no help: C2 inlines the scan into `dfs`, so almost every
+sample lands on the call line. Counting instead, over 3e8 nodes each:
+
+| | plain `verhaard` | endgame2 |
+| --- | --- | --- |
+| nodes at depth 224 and deeper | 4% | 81% |
+| nodes that open a slipped run | 2.4% | 14.4% |
+| index entries read per node | 2.0 | 5.2 |
+| of those, holding no unused piece | 62% | 85% |
+| index size (entries) | 16,350 | 22,511 |
+
+Endgame2 spends its nodes deep in the board, where most pieces are down and the slipped runs --
+each nearly a whole row or column of the index, 13 to 19 entries under the quota -- are nearly
+all empty. The quota's own bookkeeping ran on every entry at every depth, although Blackwood's floor stops
+rising at depth 160. And with slipping and the quota on, the index is about 430 KB, larger than a
+core's 256 KB L2.
+
+**What was kept**, each exact against `origin/main`:
+
+| change | endgame2 | plain `verhaard` |
+| --- | --- | --- |
+| skip the quota's per-entry count, compare and store from the depth where the floor stops rising | **1.13** (1.06-1.20), n=7 | 1.01 (0.96-1.11), n=7 |
+| hold an entry's word number as a `short` and its quota count as a `byte` | **1.04** (0.85-1.10), n=16 | 1.00 (0.93-1.03), n=7 |
+| read a key's two slipped runs as one scan (they are adjacent, cost the same break, and hold nothing against GREY) | 1.00 (0.95-1.10), n=8 | **1.05** (0.99-1.11), n=8 |
+| mark a slipped run's live entries without a branch, then visit only those | **1.14** (1.08-1.24), n=8 | **1.05** (1.01-1.18), n=8 |
+
+The first figure was 1.28 when first measured, with nine other solvers on the machine; the table
+has the re-measurement on a quieter one. The gap is a reminder that these ratios depend on the load
+around them, contention for cache above all.
+
+**What was tried and did not pay**, each reverted. The first two rows were measured by wall-clock,
+seven pairs each, while nine other solvers were running; the rest by CPU time, eight pairs each,
+each against the commit before it:
+
+| change | endgame2 | plain `verhaard` |
+| --- | --- | --- |
+| the branchless live-entry mark on every run, through a helper method | 0.92 | 0.93 |
+| cold paths moved out of `dfs`, so C2 inlines one level of the recursion | 0.97 | 0.96 |
+| the live-entry mark on perfect runs longer than three entries too | 0.97 | 0.98 |
+| one per-depth threshold standing for the three record tests | 0.99 | 0.96 |
+| a key's three run bounds interleaved in one array | 0.95 | 0.99 |
+| each placed piece's exposed colours kept by depth, to shorten the key's load chain | 0.98 | **0.91** |
+| the index arrays cached in locals in the scan loop | 0.92 | 0.92 |
+| an explicit stack in place of recursion | **0.64** | **0.60** |
+
+Two probes, never candidates, bounded what was left. Removing the per-node bookkeeping outright (the
+error-free test, `placed`, the listener check) gained 1.005, so it is not a lever. Adding one extra
+non-inlined call per node cost 0.90, which is what made the explicit stack worth one attempt. It
+still lost by 40% when warmed up so as not to run from on-stack-replacement code, most likely because
+a dozen live values of scan state outrun the registers in one method, where recursion keeps each
+frame small. C2 compiles this recursion well; the gains here came from reading less.
+
+**The result**, `origin/main` against the branch, eight interleaved pairs:
+
+| profile | `origin/main` | this branch | ratio |
+| --- | --- | --- | --- |
+| endgame2 | 25.7 M | 34.9 M | **1.36** (1.22-1.48) |
+| plain `verhaard` | 37.4 M | 41.0 M | **1.09** (1.05-1.14) |
+
+Nodes per CPU second, on an i7-8700K with the user at work on it. Endgame2 used to run at 69% of
+plain's rate and now runs at 85%, so about half of what the quota and the tail cost is gone.
+
+**What is left.** The perfect runs under the quota are still split into one entry per quota count,
+so endgame2 reads more entries per node than plain does. Merging them would reorder candidates
+across counts and change the search, so it was not done. The index could shrink further by sharing
+each row's slipped entries between keys, but a seeded order permutes every key's slipped run on its
+own, and sharing would lose that.
+
 ### Fill orders, measured without running a search
 
 Two different things are worth knowing about a fill order, and they disagree, so `core.Bench order`
@@ -986,7 +1084,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 
 ## The test suite
 
-`java -cp out core.AllTests` → **1368 checks, 0 failures, ~7 s.** No JUnit dependency; `T.java` is a
+`java -cp out core.AllTests` → **1452 checks, 0 failures, ~14 s.** No JUnit dependency; `T.java` is a
 60-line assertion helper so the suite runs with nothing but a JDK. Exits 1 on failure for CI.
 
 | Test file | What it covers |
@@ -1003,7 +1101,7 @@ So the solver scales to and beyond the real board size when the instance is not 
 | `ScanSolverTest` | What only the scan engine can get wrong: that it places in exactly its fill order, that the hint piece appears where it must and nowhere else, that an impossible fixed placement is rejected with the cell and reason in the message, that the node budget is not overshot, and that a second run of the same solver is identical. |
 | `ProgressLogTest` | What a verbose attempt writes down: that a board filled with breaks reaches the log, that a rise in the error-free reach reaches it too, and that a quiet attempt still writes nothing. |
 | `ScanVariationTest` | The seed: that it is ignored unless asked for, that one seed reproduces a run exactly, that different seeds reach different boards, that no seed changes the solution set *or the node count* of an exhaustive run, and that a restart re-shuffles the index instead of re-walking the same tree, what the root offers, and that a seed chooses the opening and changes nothing else. |
-| `ColourQuotaTest` | The colour quota: Blackwood's ramp reproduced at 16x16 and scaled elsewhere, that the tracked colours really are offered first (which is what makes abandoning a run sound), that the floor is met at every depth of the board the engine returns, that the gate only ever *removes* solutions from an exhaustive run, and that a colour the instance cannot count is refused with the colour in the message. |
+| `ColourQuotaTest` | The colour quota: Blackwood's ramp reproduced at 16x16 and scaled elsewhere, that the tracked colours really are offered first (which is what makes abandoning a run sound), that the floor is met at every depth of the board the engine returns, that the gate only ever *removes* solutions from an exhaustive run, that a colour the instance cannot count is refused with the colour in the message, and that one endgame2 seed searches exactly as `main`'s engine does. |
 | `EdgeSlippingTest` | The four slipping rules, read back off the board the engine produced instead of taken from its counters: at most one break per piece, never against a border colour, both published schedules reproduced verbatim at 16x16, the ceiling never exceeded, `total - k` scoring, and that a finished board with breaks is never reported as a solution. |
 | `PortfolioSearchTest` | That several workers never do worse than one of them alone, that nodes are genuinely summed across workers, that a solve still validates, and that the same seed and worker count reproduce exactly — including when two workers finish level, which the result settles by index rather than by thread timing. |
 | `CrossValidationTest` | **The strongest evidence:** exhaustive solution counts vs the naive reference solver, for both fast engines, with slipping off. |

@@ -294,10 +294,10 @@ public final class ScanSolver implements Search {
     private final int[] keyPerfectEnd;
     /** Where a key's left-broken run ends and its top-broken run begins. */
     private final int[] keyLeftBreakEnd;
-    private final int[] keyWord;
+    private final short[] keyWord;
     private final long[] keyMask;
     /** The natural index order, kept only when the runs are reordered. */
-    private final int[] baseWord;
+    private final short[] baseWord;
     private final long[] baseMask;
     private final int numClasses;
 
@@ -306,11 +306,20 @@ public final class ScanSolver implements Search {
     /** Depth -> the fewest quota-colour sides the board must have consumed. */
     private final int[] quotaFloor;
     /** Index entry -> how many quota-colour sides its candidates carry. */
-    private final int[] quotaCount;
+    private final byte[] quotaCount;
     /** The colours the quota tracks, empty when it is off. */
     private final int[] quotaColour;
     /** Whether the configured schedule gates this board at all. */
     private final boolean quota;
+    /**
+     * The depth from which the gate can no longer cut anything: the first at
+     * which the floor has reached its final value; 0 when the gate is off.
+     * Past it the count a board carries already meets every floor still to
+     * come, and the count only ever grows, so {@link #descend} reads the
+     * index without the gate's bookkeeping -- the same entries in the same
+     * order, only faster.
+     */
+    private final int quotaUntil;
     /** Depth -> internal edges joined up by the first {@code depth} placements. */
     private final int[] checksBefore;
     /** Whether the configured schedule lets this board slip at all. */
@@ -345,7 +354,7 @@ public final class ScanSolver implements Search {
     /** How many buckets orderRun and shuffleRuns order: every real key, never the root's class. */
     private final int orderedBuckets;
     /** The root's natural order, kept only when a seed is set. */
-    private final int[] rootBaseWord;
+    private final short[] rootBaseWord;
     private final long[] rootBaseMask;
     /** The root's own random stream, apart from the one the rest of the index draws. */
     private long rootRngState;
@@ -534,6 +543,11 @@ public final class ScanSolver implements Search {
         // out exactly as it was before.
         this.quotaFloor = quotaFloors(cfg.quotaSchedule, cells);
         this.quota = quotaFloor[cells] > 0;
+        int flat = 0;
+        if (quota) {
+            while (quotaFloor[flat] < quotaFloor[cells]) flat++;
+        }
+        this.quotaUntil = flat;
         this.quotaColour = quota ? checkedQuotaColours(cfg.quotaColours) : new int[0];
         long[][] groups;
         int[] groupCount;
@@ -651,9 +665,18 @@ public final class ScanSolver implements Search {
             entries += liveWords(topBits, b, words, groups);
         }
         keyStart[buckets] = entries;
-        this.keyWord = new int[entries];
+        // The index is read at every node and is larger than a core's L2
+        // cache once slipping and the quota are on, so each entry is held as
+        // narrow as it can be: a word number fits a short on any board up to
+        // 724x724, and a quota count is 0 to 4.
+        if (words > Short.MAX_VALUE) {
+            throw new IllegalStateException("a " + n + "x" + n + " board needs " + words
+                + " variant words, more than the candidate index can number ("
+                + Short.MAX_VALUE + ")");
+        }
+        this.keyWord = new short[entries];
         this.keyMask = new long[entries];
-        this.quotaCount = quota ? new int[entries] : null;
+        this.quotaCount = quota ? new byte[entries] : null;
         int at = 0;
         for (int b = 0; b < buckets; b++) {
             at = (b == rootBucket) ? appendEachVariant(bits, b, words, groups, groupCount, at)
@@ -665,7 +688,7 @@ public final class ScanSolver implements Search {
         // The root's natural order, kept for orderRoot to rebuild from.
         if (rootBucket >= 0) {
             int rootLength = keyPerfectEnd[rootBucket] - keyStart[rootBucket];
-            this.rootBaseWord = new int[rootLength];
+            this.rootBaseWord = new short[rootLength];
             this.rootBaseMask = new long[rootLength];
             System.arraycopy(keyWord, keyStart[rootBucket], rootBaseWord, 0, rootLength);
             System.arraycopy(keyMask, keyStart[rootBucket], rootBaseMask, 0, rootLength);
@@ -680,7 +703,7 @@ public final class ScanSolver implements Search {
         this.seeded = cfg.valueOrder == SolverConfig.VALUE_RANDOM
                    || cfg.shuffleStrength > 0;
         if (seeded || cfg.valueOrder == SolverConfig.VALUE_REVERSE) {
-            this.baseWord = new int[entries];
+            this.baseWord = new short[entries];
             this.baseMask = new long[entries];
             System.arraycopy(keyWord, 0, baseWord, 0, entries);
             System.arraycopy(keyMask, 0, baseMask, 0, entries);
@@ -775,9 +798,9 @@ public final class ScanSolver implements Search {
             for (int w = 0; w < words; w++) {
                 long m = bits[bucket * words + w] & groups[g][w];
                 while (m != 0L) {
-                    keyWord[at] = w;
+                    keyWord[at] = (short) w;
                     keyMask[at] = m & -m;
-                    if (quotaCount != null) quotaCount[at] = groupCount[g];
+                    if (quotaCount != null) quotaCount[at] = (byte) groupCount[g];
                     at++;
                     m &= m - 1L;
                 }
@@ -797,9 +820,9 @@ public final class ScanSolver implements Search {
             for (int w = 0; w < words; w++) {
                 long m = bits[bucket * words + w] & groups[g][w];
                 if (m == 0L) continue;
-                keyWord[at] = w;
+                keyWord[at] = (short) w;
                 keyMask[at] = m;
-                if (quotaCount != null) quotaCount[at] = groupCount[g];
+                if (quotaCount != null) quotaCount[at] = (byte) groupCount[g];
                 at++;
             }
         }
@@ -833,7 +856,7 @@ public final class ScanSolver implements Search {
             state = xorshift64star(state);
             int span = i - from + 1;
             int j = from + (int) Long.remainderUnsigned(state >>> 1, span);
-            int tw = keyWord[i]; keyWord[i] = keyWord[j]; keyWord[j] = tw;
+            short tw = keyWord[i]; keyWord[i] = keyWord[j]; keyWord[j] = tw;
             long tm = keyMask[i]; keyMask[i] = keyMask[j]; keyMask[j] = tm;
         }
         return state;
@@ -1169,7 +1192,7 @@ public final class ScanSolver implements Search {
     }
 
     private void swapEntries(int i, int j) {
-        int w = keyWord[i];   keyWord[i] = keyWord[j];   keyWord[j] = w;
+        short w = keyWord[i]; keyWord[i] = keyWord[j]; keyWord[j] = w;
         long m = keyMask[i];  keyMask[i] = keyMask[j];   keyMask[j] = m;
     }
 
@@ -1310,17 +1333,14 @@ public final class ScanSolver implements Search {
         // never looks at a slipped one.
         if (descend(depth, breaks, keyStart[key], keyPerfectEnd[key])) return true;
         if (breaks >= breakCeiling[depth]) return false;
-        // A side facing off the board requires GREY, and a break may not
-        // involve a border colour, so those two keys offer nothing to slip.
-        if (left != GREY
-                && descend(depth, breaks + 1, keyPerfectEnd[key], keyLeftBreakEnd[key])) {
-            return true;
-        }
-        if (topScaled != 0
-                && descend(depth, breaks + 1, keyLeftBreakEnd[key], keyStart[key + 1])) {
-            return true;
-        }
-        return false;
+        // The left-broken and top-broken runs lie back to back and both cost
+        // one break, so they are read as one.  A side facing off the board
+        // requires GREY and a break may not involve a border colour, so the
+        // index holds nothing to slip against a GREY side and needs no test
+        // for it here.
+        int from = keyPerfectEnd[key], to = keyStart[key + 1];
+        return (depth < quotaUntil) ? descendQuota(depth, breaks + 1, from, to)
+                                    : descendSparse(depth, breaks + 1, from, to);
     }
 
     /**
@@ -1343,7 +1363,7 @@ public final class ScanSolver implements Search {
      * @return true when the caller should stop descending.
      */
     private boolean descend(int depth, int breaks, int from, int to) {
-        if (quota) return descendQuota(depth, breaks, from, to);
+        if (depth < quotaUntil) return descendQuota(depth, breaks, from, to);
         for (int i = from; i < to; i++) {
             int w = keyWord[i];
             long live = avail[w];
@@ -1357,6 +1377,45 @@ public final class ScanSolver implements Search {
                 boolean stop = dfs(depth + 1, breaks);
                 avail[w] = live;
                 if (stop) return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The same scan as {@link #descend} without the gate, for a long run that
+     * is mostly empty -- the slipped runs, deep in the board, where most
+     * pieces are down.  Testing each entry with a branch mispredicts on the
+     * few that are live; this first marks the live entries, a bit each,
+     * without a branch, then visits only those.  Marking every entry up front
+     * is sound because a child restores {@link #avail} exactly before it
+     * returns, so an entry reads the same before its turn as during it.
+     *
+     * @return true when the caller should stop descending.
+     */
+    private boolean descendSparse(int depth, int breaks, int from, int to) {
+        for (int base = from; base < to; base += 64) {
+            int end = Math.min(to, base + 64);
+            long hits = 0L;
+            for (int i = base; i < end; i++) {
+                long bits = keyMask[i] & avail[keyWord[i]];
+                hits |= ((bits | -bits) >>> 63) << (i - base);
+            }
+            while (hits != 0L) {
+                int i = base + Long.numberOfTrailingZeros(hits);
+                hits &= hits - 1L;
+                int w = keyWord[i];
+                long live = avail[w];
+                long bits = keyMask[i] & live;
+                while (bits != 0L) {
+                    int v = (w << 6) + Long.numberOfTrailingZeros(bits);
+                    bits &= bits - 1L;
+                    chosen[depth] = v;
+                    avail[w] = live & ~(0xFL << (v & 0x3C));
+                    boolean stop = dfs(depth + 1, breaks);
+                    avail[w] = live;
+                    if (stop) return true;
+                }
             }
         }
         return false;
