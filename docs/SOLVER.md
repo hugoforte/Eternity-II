@@ -424,7 +424,7 @@ the engine reaches 247 pieces / 450 edges, against the 248 pieces / 454 edges a 
 engine reaches in 60 seconds on one core.
 
 **The `errorFree` column is the *error-free reach*: the most pieces the search ever held with no
-break anywhere** ([CONTEXT.md](../CONTEXT.md)) — a running
+break anywhere** ([GLOSSARY.md](../GLOSSARY.md)) — a running
 maximum over every node entered carrying no breaks, not a property of the board on record. The
 distinction is the whole point of the column. A slipped arm's record board is its *deepest* board
 and it is full of breaks, so that board's own error-free prefix is short and says nothing about how

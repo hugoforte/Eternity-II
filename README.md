@@ -99,7 +99,7 @@ which is why the solver takes them.
 That is also why **pieces placed is not a measure of progress** once breaking is switched on, and
 why the fourth column exists. `errorFree` cannot be bought with breaks, because a break ends it.
 
-[CONTEXT.md](CONTEXT.md) defines these and the rest of the vocabulary.
+[GLOSSARY.md](GLOSSARY.md) defines these and the rest of the vocabulary.
 
 **Do not read 464 against 470 as "six edges short".** They are on the same scale now — a completing
 run scores exactly `480 - breaks`, and this engine completes with sixteen where the record completes
